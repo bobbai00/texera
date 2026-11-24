@@ -36,10 +36,10 @@ object RecordingComputingUnits {
   /**
     * What the Dashboard service handed a computing unit.
     *
-    * @param text          a plan, or a change to an operator
-    * @param authorization the `Authorization` header it was handed over with
+    * @param text a plan, or a change to an operator
+    * @param uid  the user it was handed over for
     */
-  final case class Handed(cuid: Int, text: String, authorization: String)
+  final case class Handed(cuid: Int, text: String, uid: Int)
 }
 
 /**
@@ -73,13 +73,13 @@ class RecordingComputingUnits(outcome: => Handover = Taken) extends ComputingUni
       )
     )
 
-  override def start(cuid: Int, plan: String, authorization: String): Handover = {
-    startsHanded.add(Handed(cuid, plan, authorization))
+  override def start(cuid: Int, plan: String, uid: Int): Handover = {
+    startsHanded.add(Handed(cuid, plan, uid))
     outcome
   }
 
-  override def update(cuid: Int, update: String, authorization: String): Handover = {
-    updatesHanded.add(Handed(cuid, update, authorization))
+  override def update(cuid: Int, update: String, uid: Int): Handover = {
+    updatesHanded.add(Handed(cuid, update, uid))
     outcome
   }
 }

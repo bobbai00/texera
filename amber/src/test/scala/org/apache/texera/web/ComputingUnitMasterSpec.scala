@@ -52,6 +52,7 @@ import org.apache.texera.amber.engine.common.virtualidentity.util.COORDINATOR
 import org.apache.texera.amber.engine.e2e.TestUtils.buildWorkflow
 import org.apache.texera.amber.operator.TestOperators
 import org.apache.texera.amber.util.VirtualIdentityUtils
+import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.web.resource.dashboard.user.workflow.{
@@ -575,8 +576,7 @@ class ComputingUnitMasterSpec
     ranEnvironment.jersey.getResourceConfig.getClasses.asScala should contain allOf (
       classOf[ExecutionHandoverResource],
       classOf[SyncExecutionResource],
-      classOf[SessionHandler],
-      classOf[RolesAllowedDynamicFeature]
+      classOf[SessionHandler]
     )
   }
 
@@ -603,16 +603,48 @@ class ComputingUnitMasterSpec
     jersey.statusOf("GET", "/executions/1/latest") shouldBe 404
   }
 
-  it should "serve the start and the change the Dashboard hands it and the agent's wait, and no run of what a client sends it" in {
-    val jersey = new InMemoryJersey(ranEnvironment.jersey.getResourceConfig)
+  it should "serve the start and the change the Dashboard hands it and the agent's wait to a caller that names a user, and no run of what a client sends it" in {
+    val jersey = new InMemoryJersey(
+      ranEnvironment.jersey.getResourceConfig,
+      Some(new ObjectMapper().registerModule(com.fasterxml.jackson.module.scala.DefaultScalaModule))
+    )
 
-    // Each resolves, and is answered 401 without a signed-in user.
     Seq("/execution/start", "/execution/update", "/execution/12/wait").foreach { route =>
       withClue(s"$route: ") {
-        jersey.statusOf("POST", route) shouldBe 401
+        // Each resolves, and answers 401 to a request that names no user, whatever token it
+        // carries: a unit reads none.
+        Seq(
+          Map.empty[String, String],
+          Map("Authorization" -> "Bearer a-users-own-token"),
+          Map(HeaderField.UserId -> "texera")
+        ).foreach { headers =>
+          withClue(s"$headers: ") {
+            jersey.answerOf("POST", route, headers) shouldBe
+              ((401, HandoverRefusal("The request names no user.")))
+          }
+        }
         jersey.statusOf("GET", route) shouldBe 405
       }
     }
+    // A user's id in a header is all a caller needs to be heard. What it asks with an empty
+    // body is then refused, or answered, for what it is: a start with no plan, a change that
+    // carries none, and a wait for an execution no run here is of.
+    val asUser = Map(HeaderField.UserId -> "7")
+    jersey.answerOf("POST", "/execution/start", asUser)._1 shouldBe 409
+    jersey.answerOf("POST", "/execution/update", asUser) shouldBe
+      ((409, HandoverRefusal("The request carries no change to apply.")))
+    jersey.answerOf("POST", "/execution/12/wait", asUser) shouldBe
+      (
+        (
+          200,
+          SyncExecutionResult(
+            success = false,
+            state = "Error",
+            operators = Map.empty,
+            errors = Some(List("Execution 12 is not running here."))
+          )
+        )
+      )
     // A plan to run and wait for, by itself or beside the execution it is of: not served.
     jersey.statusOf("POST", "/execution/run") shouldBe 404
     jersey.statusOf("POST", "/execution/12/run") shouldBe 404
@@ -642,11 +674,17 @@ class ComputingUnitMasterSpec
     jersey.statusOf("GET", "/environments") shouldBe 404
   }
 
-  it should "install the JWT auth feature and the session-user value factory" in {
-    val singletons = ranEnvironment.jersey.getResourceConfig.getSingletons.asScala
+  it should "check no token: it installs no auth filter, no session-user value factory and no role check" in {
+    val config = ranEnvironment.jersey.getResourceConfig
+    val singletons = config.getSingletons.asScala
+    val classes = config.getClasses.asScala
 
-    singletons.count(_.isInstanceOf[AuthDynamicFeature]) shouldBe 1
-    singletons.count(_.isInstanceOf[AuthValueFactoryProvider.Binder[_]]) shouldBe 1
+    singletons.count(_.isInstanceOf[AuthDynamicFeature]) shouldBe 0
+    singletons.count(_.isInstanceOf[AuthValueFactoryProvider.Binder[_]]) shouldBe 0
+    classes should not contain classOf[RolesAllowedDynamicFeature]
+    // By name too, whatever class would carry it: nothing of JWT is registered on a unit.
+    (singletons.map(_.getClass.getName) ++ classes.map(_.getName))
+      .filter(_.toLowerCase.contains("jwt")) shouldBe empty
   }
 
   it should "attach a session handler to the servlet context" in {

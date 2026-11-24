@@ -1,0 +1,302 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The gateway of the single-node deployment: a browser reaches Texera's services and a computing
+# unit through it.
+#
+# It is Envoy, the proxy the Kubernetes deployment runs too. There Envoy Gateway programs it
+# from bin/k8s/templates/base/gateway; here this file says the same to a standalone Envoy:
+#
+#   * a request for a service goes to that service;
+#   * a request for a computing unit (/wsapi, its websocket) is first put to the access control
+#     service, which reads the caller's token, the caller's access to the unit and where the unit
+#     is. It refuses the request (403), or answers who the caller is and the unit's address. The
+#     gateway writes that answer onto the request, over whatever the client sent, and forwards it
+#     to that address. A computing unit verifies no token: it trusts these headers, and only
+#     the gateway, the Dashboard service and the agent service can reach it.
+#
+# The listener's settings, the access control filter, the /wsapi route and the `units` cluster
+# are written as Envoy Gateway writes them for the chart's listener, its `ext-auth`
+# SecurityPolicy, its dynamic route and its DynamicResolver backend.
+#
+# Envoy matches routes in the order they are listed: a longer path stands above the shorter one
+# it starts with.
+
+static_resources:
+  listeners:
+    - name: http
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8080
+      filter_chains:
+        - filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: gateway
+                codec_type: AUTO
+                use_remote_address: true
+                normalize_path: true
+                merge_slashes: true
+                path_with_escaped_slashes_action: UNESCAPE_AND_REDIRECT
+                server_header_transformation: PASS_THROUGH
+                common_http_protocol_options:
+                  headers_with_underscores_action: REJECT_REQUEST
+                # Websockets, on every route: a computing unit's, and the agent service's.
+                upgrade_configs:
+                  - upgrade_type: websocket
+                http_filters:
+                  # Off for every route but the one that enables it: /wsapi.
+                  - name: envoy.filters.http.ext_authz
+                    disabled: true
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+                      transport_api_version: V3
+                      http_service:
+                        # The access control service is asked /api/auth<the request's own path
+                        # and query>, with the request's Authorization header.
+                        server_uri:
+                          uri: http://access-control-service:9096/api/auth
+                          cluster: access-control-service
+                          timeout: 10s
+                        path_prefix: /api/auth
+                        authorization_response:
+                          # What its answer puts onto the request: who the caller is, and with
+                          # Host the address of the unit.
+                          allowed_upstream_headers:
+                            patterns:
+                              - exact: x-user-computing-unit-access
+                                ignore_case: true
+                              - exact: x-user-id
+                                ignore_case: true
+                              - exact: x-user-name
+                                ignore_case: true
+                              - exact: x-user-email
+                                ignore_case: true
+                              - exact: Host
+                                ignore_case: true
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                      suppress_envoy_headers: true
+                route_config:
+                  name: texera
+                  virtual_hosts:
+                    - name: texera
+                      domains: ["*"]
+                      # A service's route: its answer may take as long as it keeps coming
+                      # (`timeout: 0s`; Envoy would otherwise cut it off after 15 s), and the
+                      # request ends once no byte has gone either way for a minute.
+                      routes:
+                        - match: { prefix: /api/compile }
+                          route: { cluster: workflow-compiling-service, timeout: 0s, idle_timeout: 60s }
+                        - match: { prefix: /api/workflow-to-python }
+                          route: { cluster: workflow-compiling-service, timeout: 0s, idle_timeout: 60s }
+
+                        - match: { prefix: /api/dataset }
+                          route: { cluster: file-service, timeout: 0s, idle_timeout: 60s }
+                        - match: { prefix: /api/access/dataset/ }
+                          route: { cluster: file-service, timeout: 0s, idle_timeout: 60s }
+                        # With its trailing slash, so that /api/models below is not a model's.
+                        - match: { prefix: /api/model/ }
+                          route: { cluster: file-service, timeout: 0s, idle_timeout: 60s }
+                        - match: { prefix: /api/access/model/ }
+                          route: { cluster: file-service, timeout: 0s, idle_timeout: 60s }
+
+                        - match: { prefix: /api/config }
+                          route: { cluster: config-service, timeout: 0s, idle_timeout: 60s }
+
+                        - match: { prefix: /api/computing-unit }
+                          route: { cluster: workflow-computing-unit-managing-service, timeout: 0s, idle_timeout: 60s }
+                        - match: { prefix: /api/access/computing-unit/ }
+                          route: { cluster: workflow-computing-unit-managing-service, timeout: 0s, idle_timeout: 60s }
+
+                        # LLM API traffic goes through the access control service, which then
+                        # forwards it to LiteLLM.
+                        - match: { path: /api/models }
+                          route: { cluster: access-control-service, timeout: 0s, idle_timeout: 60s }
+                        - match: { prefix: /api/chat/ }
+                          route: { cluster: access-control-service, timeout: 0s, idle_timeout: 60s }
+
+                        # An agent's websocket and its streamed answers stay open for a day
+                        # without a byte.
+                        - match: { prefix: /api/agents }
+                          route: { cluster: agent-service, timeout: 0s, idle_timeout: 86400s }
+
+                        - match: { prefix: /api/notebook-migration/ }
+                          route: { cluster: notebook-migration-service, timeout: 0s, idle_timeout: 60s }
+
+                        - match: { prefix: /api/results/ }
+                          route: { cluster: result-service, timeout: 0s, idle_timeout: 60s }
+
+                        # Creating an execution asks the compiling service for the workflow's
+                        # plan, which compiles it and reads the files it scans (the Dashboard
+                        # waits up to 60s), then links the plan's files and hands the plan to
+                        # the computing unit, which starts the execution (the Dashboard waits up
+                        # to 30s): together they can take longer than a minute.
+                        # The Dashboard reaches the compiling service and the unit directly, not
+                        # through this gateway. The method keeps the other /api/executions
+                        # routes on the route below.
+                        - match:
+                            path: /api/executions
+                            headers:
+                              - name: ":method"
+                                string_match: { exact: POST }
+                          route: { cluster: dashboard-service, timeout: 120s, idle_timeout: 3600s }
+                        - match: { prefix: /api/ }
+                          route: { cluster: dashboard-service, timeout: 0s, idle_timeout: 60s }
+
+                        # A computing unit's websocket. The access control service decides who
+                        # may open it and where the unit is. The route sets no time limit: a
+                        # socket may be silent for Envoy's five minutes.
+                        - match: { path_separated_prefix: /wsapi }
+                          route: { cluster: units }
+                          typed_per_filter_config:
+                            envoy.filters.http.ext_authz:
+                              "@type": type.googleapis.com/envoy.config.route.v3.FilterConfig
+                              config: {}
+
+                        # Everything else is the Dashboard service's: the web application itself.
+                        - match: { prefix: / }
+                          route: { cluster: dashboard-service, timeout: 0s, idle_timeout: 60s }
+
+  clusters:
+    # A computing unit, at the address the access control service answered for its request:
+    # the request's Host, which Envoy looks up when it picks the unit.
+    - name: units
+      connect_timeout: 10s
+      lb_policy: CLUSTER_PROVIDED
+      dns_lookup_family: V4_PREFERRED
+      cluster_type:
+        name: envoy.clusters.dynamic_forward_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+          dns_cache_config:
+            name: units
+            dns_lookup_family: V4_PREFERRED
+            dns_refresh_rate: 30s
+            # The one setting that is not Envoy Gateway's. Docker's DNS gives a name's address
+            # a lifetime of ten minutes, and Envoy's own resolver would keep the address for
+            # as long: a unit that came back at another address would stay out of reach. This
+            # resolver asks the system instead, and looks again after a minute.
+            typed_dns_resolver_config:
+              name: envoy.network.dns_resolver.getaddrinfo
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.getaddrinfo.v3.GetAddrInfoDnsResolverConfig
+
+    # The services, each by its name on the deployment's network. Envoy looks a name up again
+    # every five seconds, so a service that was recreated is found at its new address.
+    - name: dashboard-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: dashboard-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: dashboard-service, port_value: 8080 }
+    - name: workflow-compiling-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: workflow-compiling-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: workflow-compiling-service, port_value: 9090 }
+    - name: file-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: file-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: file-service, port_value: 9092 }
+    - name: config-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: config-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: config-service, port_value: 9094 }
+    - name: workflow-computing-unit-managing-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: workflow-computing-unit-managing-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: workflow-computing-unit-managing-service, port_value: 8888 }
+    - name: access-control-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: access-control-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: access-control-service, port_value: 9096 }
+    - name: agent-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: agent-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: agent-service, port_value: 3001 }
+    - name: notebook-migration-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: notebook-migration-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: notebook-migration-service, port_value: 9098 }
+    - name: result-service
+      type: STRICT_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      load_assignment:
+        cluster_name: result-service
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address: { address: result-service, port_value: 9102 }

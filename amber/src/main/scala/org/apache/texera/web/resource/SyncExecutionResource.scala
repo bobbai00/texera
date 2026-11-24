@@ -21,7 +21,6 @@ package org.apache.texera.web.resource
 
 import com.fasterxml.jackson.databind.node.ObjectNode
 import com.typesafe.scalalogging.LazyLogging
-import io.dropwizard.auth.Auth
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   DocumentFactory,
@@ -41,15 +40,13 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   ExecutionStatsStore
 }
 import io.reactivex.rxjava3.core.Observable
-import org.apache.texera.auth.SessionUser
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 import org.apache.texera.web.storage.ResultUris
 
 import java.net.URI
 import java.util.concurrent.TimeUnit
-import javax.annotation.security.RolesAllowed
 import javax.ws.rs._
-import javax.ws.rs.core.MediaType
+import javax.ws.rs.core.{Context, HttpHeaders, MediaType}
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
 import scala.jdk.CollectionConverters._
@@ -142,20 +139,20 @@ class SyncExecutionResource(
     * error.
     *
     * A wait for an execution this unit holds no run of, or that another user started, is
-    * answered at once, as an error that names why, and leaves the run as it is.
+    * answered at once, as an error that names why, and leaves the run as it is. The caller is
+    * the user the request names ([[UnitCaller]]): one that names none is answered 401.
     */
   @POST
   @Path("/{eid}/wait")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
   def awaitExecution(
       @PathParam("eid") eid: Long,
       request: SyncWaitRequest,
-      @Auth user: SessionUser
+      @Context headers: HttpHeaders
   ): SyncExecutionResult = {
+    val uid = Some(UnitCaller.required(headers).getUid.intValue())
     if (request == null) return errorResult("The request has no body.")
     logger.info(s"Asked to wait for execution $eid.")
     val targetOperatorIds = Option(request.targetOperatorIds).getOrElse(Nil)
-    val uid = Option(user.getUser.getUid).map(_.intValue())
     try {
       holding(eid) match {
         case None => refused(s"Execution $eid is not running here.")

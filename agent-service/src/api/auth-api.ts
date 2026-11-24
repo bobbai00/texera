@@ -69,3 +69,22 @@ export function createAuthHeaders(token: string): Record<string, string> {
     "Content-Type": "application/json",
   };
 }
+
+/**
+ * The headers of a request to a computing unit: the id of the user it is from, and no token. A
+ * unit verifies none. Only the gateway, the Dashboard service and this service reach it, and it
+ * takes their word for who a request is from.
+ *
+ * The user is the one `token` names. The token is not verified here: use this for a request
+ * that follows one the Dashboard service accepted with the same token.
+ */
+export function createUnitHeaders(token: string): Record<string, string> {
+  const { uid } = extractUserFromToken(token);
+  if (!Number.isInteger(uid)) {
+    throw new Error("The token names no user");
+  }
+  return {
+    "x-user-id": String(uid),
+    "Content-Type": "application/json",
+  };
+}

@@ -21,10 +21,7 @@ package org.apache.texera.web.service.execution
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
-import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.dao.SqlServer
-import org.apache.texera.dao.jooq.generated.Tables.WORKFLOW_COMPUTING_UNIT
-import org.apache.texera.dao.jooq.generated.enums.WorkflowComputingUnitTypeEnum
+import org.apache.texera.auth.util.{ComputingUnitAddress, HeaderField}
 import org.apache.texera.web.service.execution.ComputingUnitClient._
 
 import java.io.IOException
@@ -69,43 +66,8 @@ object ComputingUnitClient {
   val Deadline: FiniteDuration = 30.seconds
 
   /** The computing units of this deployment, each at the address its record gives. */
-  lazy val forDeployment: ComputingUnitClient = new HttpComputingUnitClient(addressOf)
-
-  /**
-    * Where the Dashboard service reaches computing unit `cuid`: None for a unit there is no
-    * record of, and for one whose record gives no address.
-    */
-  def addressOf(cuid: Int): Option[URI] =
-    Option(
-      SqlServer
-        .getInstance()
-        .createDSLContext()
-        .select(WORKFLOW_COMPUTING_UNIT.TYPE, WORKFLOW_COMPUTING_UNIT.URI)
-        .from(WORKFLOW_COMPUTING_UNIT)
-        .where(WORKFLOW_COMPUTING_UNIT.CUID.eq(Integer.valueOf(cuid)))
-        .fetchOne()
-    ).flatMap(unit =>
-      address(unit.value1(), unit.value2(), ApplicationConfig.computingUnitEndpoint)
-    )
-
-  /**
-    * Where a computing unit of `unitType` is reached. A unit Kubernetes runs records the address
-    * of its pod inside the cluster, which is where the gateway routes its websocket too: one
-    * that records none is reached nowhere. A local unit records the address a browser reaches
-    * it at, which says nothing to a service: it is the one unit of its deployment, at
-    * `configured` (`web-server.computing-unit-endpoint`).
-    */
-  def address(
-      unitType: WorkflowComputingUnitTypeEnum,
-      recorded: String,
-      configured: String
-  ): Option[URI] =
-    if (unitType == WorkflowComputingUnitTypeEnum.kubernetes) {
-      Option(recorded)
-        .map(_.trim)
-        .filter(_.nonEmpty)
-        .map(uri => new URI(if (uri.contains("://")) uri else s"http://$uri"))
-    } else Some(new URI(configured))
+  lazy val forDeployment: ComputingUnitClient =
+    new HttpComputingUnitClient(ComputingUnitAddress.of)
 }
 
 /**
@@ -119,22 +81,24 @@ trait ComputingUnitClient {
     * Hands `plan`, the plan of an execution created for computing unit `cuid`, to that unit,
     * which starts the execution it names.
     *
-    * @param authorization the `Authorization` header of the user the execution is created for
+    * @param uid the user the execution is created for
     */
-  def start(cuid: Int, plan: String, authorization: String): Handover
+  def start(cuid: Int, plan: String, uid: Int): Handover
 
   /**
     * Hands `update`, a change to an operator of a paused execution, to computing unit `cuid`,
     * which runs it.
     *
-    * @param authorization the `Authorization` header of the user who asks for the change
+    * @param uid the user who asks for the change
     */
-  def update(cuid: Int, update: String, authorization: String): Handover
+  def update(cuid: Int, update: String, uid: Int): Handover
 }
 
 /**
   * Computing units over HTTP: `POST /api/execution/start` and `POST /api/execution/update`
-  * on the unit (`org.apache.texera.web.resource.ExecutionHandoverResource`).
+  * on the unit (`org.apache.texera.web.resource.ExecutionHandoverResource`). A request names
+  * the user it is for in [[HeaderField.UserId]]: the unit checks no token, and this service
+  * has checked the user's.
   *
   * @param addressOf where a computing unit is reached; None for a unit there is no record of
   * @param deadline  how long a unit may take to answer
@@ -152,20 +116,20 @@ class HttpComputingUnitClient(
     .connectTimeout(Duration.ofMillis(connectTimeout.toMillis))
     .build()
 
-  override def start(cuid: Int, plan: String, authorization: String): Handover =
+  override def start(cuid: Int, plan: String, uid: Int): Handover =
     post(
       cuid,
       "/api/execution/start",
       mapper.createObjectNode().put("plan", plan).put("computingUnitId", cuid),
-      authorization
+      uid
     )
 
-  override def update(cuid: Int, update: String, authorization: String): Handover =
+  override def update(cuid: Int, update: String, uid: Int): Handover =
     post(
       cuid,
       "/api/execution/update",
       mapper.createObjectNode().put("update", update),
-      authorization
+      uid
     )
 
   /**
@@ -173,7 +137,7 @@ class HttpComputingUnitClient(
     * took it; one that answers 4xx refused it, with the message its answer gives. Any other
     * answer, and none by the deadline, leave open whether the unit took it.
     */
-  private def post(cuid: Int, path: String, body: ObjectNode, authorization: String): Handover =
+  private def post(cuid: Int, path: String, body: ObjectNode, uid: Int): Handover =
     Try(addressOf(cuid)).toEither match {
       case Left(failure) => Unreached(failure)
       case Right(None) =>
@@ -185,7 +149,7 @@ class HttpComputingUnitClient(
             .timeout(Duration.ofMillis(deadline.toMillis))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
-            .header("Authorization", Option(authorization).getOrElse(""))
+            .header(HeaderField.UserId, uid.toString)
             .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
             .build()
           val response =

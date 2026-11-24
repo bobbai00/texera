@@ -90,7 +90,7 @@ object OperatorUpdates {
   *     ([[PhysicalPlanCodec.MaxPlanBytes]]; 400).
   *  1. The operator made to run, as its executor and what its code reads (as
   *     [[PhysicalPlanCodec.encodeUpdate]] writes one), is handed to the execution's computing
-  *     unit, with the caller's own token ([[ComputingUnitClient.update]]), and the operator's
+  *     unit, for the caller ([[ComputingUnitClient.update]]), and the operator's
   *     id is answered (201). A unit that does not take the change is a 409, with the unit's
   *     reason; one that cannot be reached a 503, and one that does not answer a 504.
   *
@@ -109,8 +109,7 @@ class OperatorUpdates(
     * steps this class describes.
     *
     * @param authorization the request's `Authorization` header: the user's own token, which the
-    *                      compiling service is asked for the change with, and the computing unit
-    *                      handed it with
+    *                      compiling service is asked for the change with
     * @throws WebApplicationException with the status of the step that refused the request; 500
     *                                 when the change cannot be made
     */
@@ -143,7 +142,7 @@ class OperatorUpdates(
         )
       )
     }
-    units.update(cuid, update, authorization) match {
+    units.update(cuid, update, uid) match {
       case Taken =>
         logger.info(
           s"Computing unit $cuid took a change to operator ${operatorId.id} of execution $eid, " +

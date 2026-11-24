@@ -51,7 +51,7 @@ mkdir -p "$repo/bin/single-node/examples" "$repo/bin/observability/parca" "$repo
     >> bin/single-node/docker-compose.yml
   echo "PARCA=1" > bin/observability/parca/parca-agent.env
   printf 'TEXERA_SERVICE_LOG_LEVEL=INFO\nIMAGE_TAG=latest\n' > bin/single-node/.env
-  for f in nginx.conf litellm-config.yaml LICENSE DISCLAIMER README.md; do
+  for f in envoy.yaml litellm-config.yaml LICENSE DISCLAIMER README.md; do
     echo "$f" > "bin/single-node/$f"
   done
   printf '#!/usr/bin/env bash\necho load\n' > bin/single-node/examples/load-examples.sh

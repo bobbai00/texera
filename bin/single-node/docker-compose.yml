@@ -42,6 +42,10 @@ services:
       - RUSTFS_OBS_LOGGER_LEVEL=warn
     volumes:
       - rustfs_data:/data
+    # Also on the computing unit's network: a unit reads its input and writes its results here.
+    networks:
+      - default
+      - unit
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9000/health"]
       interval: 5s
@@ -146,6 +150,10 @@ services:
       - .env
     entrypoint: ["/home/nonroot/lakekeeper"]
     command: ["serve"]
+    # Also on the computing unit's network: the lake's catalog is the one service a unit calls.
+    networks:
+      - default
+      - unit
     healthcheck:
       test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
       interval: 10s
@@ -406,20 +414,55 @@ services:
       timeout: 3s
       retries: 10
 
-  # WorkflowRuntimeCoordinatorService provides endpoints for executing workflows and interactions during executions.
+  # WorkflowRuntimeCoordinatorService is the computing unit: it runs the executions the
+  # DashboardService hands it, and serves the websocket a browser watches and steers a run over.
   workflow-runtime-coordinator-service:
     image: ${IMAGE_REGISTRY:-ghcr.io/apache}/texera-workflow-execution-coordinator:${IMAGE_TAG:-latest}
     container_name: workflow-runtime-coordinator-service
     restart: unless-stopped
     depends_on:
-      workflow-compiling-service:
-        condition: service_started
       lakekeeper:
         condition: service_healthy
       lakekeeper-init:
         condition: service_completed_successfully
-    env_file:
-      - .env
+    # No env_file here on purpose. A computing unit runs users' code, so it is given only what a
+    # unit needs, not the whole .env (which holds the database, LakeFS and LiteLLM credentials,
+    # and the key the services sign tokens with when AUTH_JWT_SECRET is set): the list the unit
+    # manager gives a unit it creates in Kubernetes, and the services' log level. A variable
+    # named without a value is taken from .env, or from the shell, and left out when neither
+    # sets it.
+    environment:
+      - TEXERA_SERVICE_LOG_LEVEL
+      # The lake's catalog, where a unit keeps everything a run produces and records. A unit
+      # has no route to Postgres: STORAGE_ICEBERG_CATALOG_TYPE=postgres needs its three
+      # STORAGE_ICEBERG_CATALOG_POSTGRES_* variables added here and postgres on the unit network.
+      - STORAGE_ICEBERG_CATALOG_TYPE
+      - STORAGE_ICEBERG_CATALOG_REST_URI
+      - STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME
+      # The object store.
+      - STORAGE_S3_ENDPOINT
+      - STORAGE_S3_REGION
+      - STORAGE_S3_AUTH_USERNAME
+      - STORAGE_S3_AUTH_PASSWORD
+      - FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT
+      # Overrides, each with a default in the unit's own configuration.
+      - MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
+      - STORAGE_INPUT_LINKS_ALLOWED_ENDPOINTS
+      - UDF_PYTHON_ENVIRONMENTS_ROOT
+      - UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES
+      - STORAGE_ICEBERG_CATALOG_REST_CONNECTION_TIMEOUT_MS
+      - STORAGE_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS
+      - STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS
+      # Observability: a unit emits to the collector once OTEL_SDK_DISABLED=false.
+      - OTEL_SDK_DISABLED
+      - OTEL_EXPORTER_OTLP_ENDPOINT
+      - TEXERA_OTEL_ALLOWED_HOSTS
+      - OTEL_METRIC_EXPORT_INTERVAL
+    # A network of its own, not the services': a unit reaches the lake's catalog and the object
+    # store, and only the gateway, the DashboardService and the AgentService reach a unit. It
+    # verifies no token, and takes their word for who a request is from.
+    networks:
+      - unit
     volumes:
       - workflow_result_data:/amber/user-resources
 
@@ -446,6 +489,10 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    # Also on the computing unit's network: it hands the unit each execution's plan.
+    networks:
+      - default
+      - unit
     volumes:
       - workflow_result_data:/amber/user-resources
     healthcheck:
@@ -489,6 +536,10 @@ services:
         condition: service_started
     env_file:
       - .env
+    # Also on the computing unit's network: it waits there for the executions it asked for.
+    networks:
+      - default
+      - unit
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/api/healthcheck"]
       interval: 5s
@@ -516,7 +567,7 @@ services:
       retries: 10
 
   # JupyterLab instance that the notebook migration tool embeds in an iframe.
-  # Its port is published because the browser loads it directly, not through nginx
+  # Its port is published because the browser loads it directly, not through the gateway
   # (STORAGE_JUPYTER_PUBLIC_URL); notebook-migration-service reaches it in-network
   # via STORAGE_JUPYTER_INTERNAL_URL.
   jupyter:
@@ -564,10 +615,13 @@ services:
       timeout: 3s
       retries: 10
 
-  # Part 3: reverse proxy service for Texera's micro services
-  nginx:
-    image: nginx:1.30.5-alpine
-    container_name: texera-nginx
+  # Part 3: the gateway in front of Texera's micro services
+  # Envoy, the proxy the Kubernetes deployment runs too, with envoy.yaml saying what Envoy Gateway
+  # says there: a request for a service goes to that service, and a computing unit's websocket
+  # goes to the unit once the AccessControlService has said who the caller is.
+  gateway:
+    image: envoyproxy/envoy:distroless-v1.36.4
+    container_name: texera-gateway
     depends_on:
       - workflow-compiling-service
       - file-service
@@ -579,15 +633,20 @@ services:
       - agent-service
       - notebook-migration-service
       - result-service
+    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "warn"]
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./envoy.yaml:/etc/envoy/envoy.yaml:ro
+    # Also on the computing unit's network: a unit's websocket comes through here.
+    networks:
+      - default
+      - unit
     ports:
       - "${TEXERA_PORT:-8080}:8080"
 
   startup-message:
     image: alpine:3.24.2
     depends_on:
-      nginx:
+      gateway:
         condition: service_started
     environment:
       - TEXERA_PORT=${TEXERA_PORT:-8080}
@@ -650,6 +709,10 @@ services:
     volumes:
       - ../observability/otel-collector/config.yaml:/etc/otelcol-contrib/config.yaml:ro,z
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    # Also on the computing unit's network: a unit emits here once its telemetry is on.
+    networks:
+      - default
+      - unit
     # In-compose services reach the OTLP receivers over the bridge
     # network as otel-collector:4317/:4318, so the base file publishes
     # no host ports. For a backend running outside docker (sbt /
@@ -873,6 +936,9 @@ services:
 networks:
   default:
     name: texera-single-node
+  # The computing unit's: see workflow-runtime-coordinator-service.
+  unit:
+    name: texera-single-node-unit
 
 # persistent volumes
 volumes:

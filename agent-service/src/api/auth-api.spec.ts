@@ -18,7 +18,13 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { createAuthHeaders, extractBearerToken, extractUserFromToken, validateToken } from "./auth-api";
+import {
+  createAuthHeaders,
+  createUnitHeaders,
+  extractBearerToken,
+  extractUserFromToken,
+  validateToken,
+} from "./auth-api";
 
 /**
  * Builds a well-formed three-segment token carrying the given payload. All three segments are
@@ -133,5 +139,25 @@ describe("createAuthHeaders", () => {
       Authorization: "Bearer abc123",
       "Content-Type": "application/json",
     });
+  });
+});
+
+describe("createUnitHeaders", () => {
+  test("names the user the token names, and carries no token, name or e-mail address", () => {
+    const token = tokenWith({ userId: 42, sub: "Ada Lovelace", email: "ada@example.com", role: "ADMIN" });
+
+    expect(createUnitHeaders(token)).toEqual({
+      "x-user-id": "42",
+      "Content-Type": "application/json",
+    });
+  });
+
+  test("refuses a token that names no user", () => {
+    expect(() => createUnitHeaders(tokenWith({ sub: "ada" }))).toThrow("The token names no user");
+    expect(() => createUnitHeaders(tokenWith({ userId: "42" }))).toThrow("The token names no user");
+  });
+
+  test("refuses what is not a token", () => {
+    expect(() => createUnitHeaders("not-a-token")).toThrow(/Failed to decode JWT/);
   });
 });

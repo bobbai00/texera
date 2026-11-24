@@ -147,10 +147,10 @@ spec:
     # files and hands the plan to the computing unit, which starts the execution (the Dashboard
     # waits up to 30s): together they can take longer than Envoy's 15s default. The Dashboard
     # reaches the compiling service at its own Service and the unit at its pod, not through this
-    # gateway, so no route's timeout applies between them. An exact match outranks the /api catch-all below,
-    # and the method keeps the other /api/executions routes on it. The gateway sets no limit on
-    # the size of the body, the workflow, here or on any other route; the single-node nginx
-    # accepts one megabyte.
+    # gateway, so no route's timeout applies between them. An exact match outranks the /api
+    # catch-all below, and the method keeps the other /api/executions routes on it. The gateway
+    # sets no limit on the size of the body, the workflow, here or on any other route; neither
+    # does the single-node gateway (bin/single-node/envoy.yaml).
     - matches:
         - path:
             type: Exact

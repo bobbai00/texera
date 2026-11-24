@@ -118,7 +118,7 @@ bundle="$work/compose/$compose_name"
 mkdir -p "$raw" "$bundle"
 git archive --format=tar "$commit" -- bin/single-node/ bin/observability/ sql/ NOTICE licenses/LICENSE-BSD-3-Clause.txt | "$gnu_tar" -x -C "$raw"
 
-for f in docker-compose.yml nginx.conf litellm-config.yaml LICENSE DISCLAIMER README.md .env; do
+for f in docker-compose.yml envoy.yaml litellm-config.yaml LICENSE DISCLAIMER README.md .env; do
   cp "$raw/bin/single-node/$f" "$bundle/"
 done
 cp "$raw/NOTICE" "$bundle/"

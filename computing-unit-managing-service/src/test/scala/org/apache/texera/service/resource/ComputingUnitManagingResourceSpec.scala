@@ -590,8 +590,7 @@ class ComputingUnitManagingResourceSpec
   // Mirrors the private production list, so a name added or dropped there fails the all-set
   // case.
   private val requiredEnvNames = Seq(
-    EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT,
-    EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+    EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT
   )
 
   private val payloadSize = EnvironmentalVariable.ENV_MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
@@ -624,6 +623,17 @@ class ComputingUnitManagingResourceSpec
     env.keySet.filter(_.startsWith("STORAGE_JDBC")) shouldBe empty
     // Nor its address by its value, under another name.
     env.values.map(_.toString) should not contain StorageConfig.jdbcUrl
+  }
+
+  // A unit verifies no token, and runs its users' code, which reads whatever the unit is given.
+  it should "give a unit no secret to verify tokens with, although this service holds one" in {
+    val env = ComputingUnitManagingResource.computingUnitEnvironment(deployed)
+
+    env.keySet should not contain EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+    env.keySet.filter(_.startsWith("AUTH_")) shouldBe empty
+    // Nor its value, under another name.
+    env.values.map(_.toString) should not contain
+      deployed(EnvironmentalVariable.ENV_AUTH_JWT_SECRET).get
   }
 
   it should "give a unit the lake, the object store, and what a unit reads of this service's own" in {
@@ -666,14 +676,16 @@ class ComputingUnitManagingResourceSpec
   }
 
   // USER_SYS_ENABLED and SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR lost their
-  // conf keys (#3831, #3542); the payload size defaults to 1024 in application.conf; and where
-  // results are uploaded is read by the Dashboard service, which exports them. None of the
-  // four stops a unit from starting, so none may refuse to create one.
+  // conf keys (#3831, #3542); the payload size defaults to 1024 in application.conf; where
+  // results are uploaded is read by the Dashboard service, which exports them; and the secret
+  // tokens are signed with is of no use to a unit, which verifies none. None of the five stops
+  // a unit from starting, so none may refuse to create one.
   it should "not require a variable the unit does not need" in {
     val notNeeded = Seq(
       EnvironmentalVariable.ENV_USER_SYS_ENABLED,
       EnvironmentalVariable.ENV_SCHEDULE_GENERATOR_ENABLE_COST_BASED_SCHEDULE_GENERATOR,
       EnvironmentalVariable.ENV_FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT,
+      EnvironmentalVariable.ENV_AUTH_JWT_SECRET,
       payloadSize
     )
     val env = ComputingUnitManagingResource.requiredComputingUnitEnv(name =>
@@ -682,22 +694,21 @@ class ComputingUnitManagingResourceSpec
     notNeeded.foreach(name => env.keySet should not contain name)
   }
 
-  it should "name the missing variable and leave the ones that are set out of it" in {
-    val absent = EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+  it should "name the missing variable, and none that is set or that a unit is not given" in {
+    val absent = EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT
     val thrown = intercept[ServiceUnavailableException] {
       ComputingUnitManagingResource.requiredComputingUnitEnv(name =>
         if (name == absent) None else Some("set")
       )
     }
     thrown.getMessage should include(absent)
-    requiredEnvNames
-      .filterNot(_ == absent)
+    (optionalEnvNames :+ EnvironmentalVariable.ENV_AUTH_JWT_SECRET)
       .foreach(name => thrown.getMessage should not include name)
   }
 
   // The chart renders every value as "{{ .value }}", so an unset one arrives as "".
   it should "treat a blank variable as missing" in {
-    val blank = EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+    val blank = EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT
     val thrown = intercept[ServiceUnavailableException] {
       ComputingUnitManagingResource.requiredComputingUnitEnv(name =>
         if (name == blank) Some("   ") else Some("set")
@@ -706,12 +717,13 @@ class ComputingUnitManagingResourceSpec
     thrown.getMessage should include(blank)
   }
 
-  // AuthConfig does not trim, so a trimmed copy would verify against a different key. The
-  // endpoints are trimmed by their own readers, so they need nothing here either.
+  // The endpoint is trimmed by its own reader on the unit, so it needs nothing here.
   it should "hand on the value untrimmed" in {
-    val env =
-      ComputingUnitManagingResource.requiredComputingUnitEnv(_ => Some(" s3cret "))
-    env(EnvironmentalVariable.ENV_AUTH_JWT_SECRET) shouldBe " s3cret "
+    val env = ComputingUnitManagingResource.requiredComputingUnitEnv(_ =>
+      Some(" http://file-service:9092/api/dataset/presign-download ")
+    )
+    env(EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT) shouldBe
+      " http://file-service:9092/api/dataset/presign-download "
   }
 
   // The variable is there in the pod's env, so calling it "missing" would read as wrong.

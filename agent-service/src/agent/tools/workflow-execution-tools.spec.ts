@@ -84,8 +84,12 @@ function makeLinearState(): { state: WorkflowState; source: string; target: stri
   return { state, source, target };
 }
 
+// The user every run below is for, and a token that names them: only its payload is read here.
+const USER_ID = 9;
+const USER_TOKEN = `header.${Buffer.from(JSON.stringify({ userId: USER_ID, sub: "ada" })).toString("base64")}.signature`;
+
 function makeConfig(overrides: Partial<ExecutionConfig> = {}): ExecutionConfig {
-  return { userToken: "tok", workflowId: 1, ...overrides };
+  return { userToken: USER_TOKEN, workflowId: 1, ...overrides };
 }
 
 function makeFatal(message: string): WorkflowFatalError {
@@ -186,6 +190,11 @@ function requestUrls(): string[] {
 // The JSON body of the nth request: an execution's create comes first (0), then the wait for it (1).
 function requestBody(callIndex = 0): any {
   return JSON.parse((fetchSpy.mock.calls[callIndex][1] as RequestInit).body as string);
+}
+
+// The headers of the nth request.
+function requestHeaders(callIndex = 0): Record<string, string> {
+  return (fetchSpy.mock.calls[callIndex][1] as RequestInit).headers as Record<string, string>;
 }
 
 // Project a canonical summary onto the backend's legacy wire JSON, which is what
@@ -858,13 +867,16 @@ describe("executeOperatorAndFormat - create, then wait", () => {
     );
 
     expect(requestUrls()).toEqual([CREATE_URL, `${UNIT}/api/execution/12/wait`]);
-    // Both as the user, and both ended by the same stop.
+    // Both are ended by the same stop.
     for (const [, init] of fetchSpy.mock.calls) {
       const request = init as RequestInit;
       expect(request.method).toBe("POST");
-      expect(request.headers).toEqual({ "Content-Type": "application/json", Authorization: "Bearer tok" });
       expect(request.signal).toBe(controller.signal);
     }
+    // The Dashboard is asked with the user's token, which it verifies. A unit verifies no token:
+    // it is handed none, and told the id of the user the token names.
+    expect(requestHeaders(0)).toEqual({ "Content-Type": "application/json", Authorization: `Bearer ${USER_TOKEN}` });
+    expect(requestHeaders(1)).toEqual({ "Content-Type": "application/json", "x-user-id": String(USER_ID) });
     // Exactly these fields: no settings, which the Dashboard defaults, and no warehouse, as none is picked.
     expect(requestBody(0)).toEqual({
       wid: 7,

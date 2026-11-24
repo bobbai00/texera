@@ -186,7 +186,7 @@ final class WorkflowNotCompiled(
   *     ([[ExecutionsMetadataPersistService.insertResultTables]]): the result service lists and
   *     reads the execution's results by them. A record that fails closes the row as failed,
   *     "its plan could not be made" (500).
-  *  1. The plan is handed to the computing unit, with the user's own token
+  *  1. The plan is handed to the computing unit, for the user
   *     ([[ComputingUnitClient.start]]), and the unit starts the execution: the execution's id is
   *     answered (201). A unit that refuses the start closes the row as failed, with the unit's
   *     reason (409), and so does a unit that cannot be reached (503). A unit that was sent the
@@ -232,8 +232,7 @@ class ExecutionCreator(
     * @param requestUri    the URI the request came to: the email about the run links to the
     *                      workflow on its host
     * @param authorization the request's `Authorization` header: the user's own token, which the
-    *                      compiling service is asked for the plan with, and the computing unit
-    *                      handed it with
+    *                      compiling service is asked for the plan with
     * @throws WebApplicationException with the status of the step that refused the request or
     *                                 failed; a [[WorkflowNotCompiled]] when the workflow does not
     *                                 compile
@@ -302,7 +301,7 @@ class ExecutionCreator(
     closingOnFailure(eid, planNotMade)(
       ExecutionsMetadataPersistService.insertResultTables(eid, resultTables)
     )
-    handOver(eid, checked.computingUnitId, plan, authorization)
+    handOver(eid, checked.computingUnitId, plan, uid)
     background.execute(() => {
       closeEndedBefore(eid, wid, checked.computingUnitId)
       expiry.expireReplaced(wid.id, checked.computingUnitId, eid.id)
@@ -322,9 +321,9 @@ class ExecutionCreator(
       eid: ExecutionIdentity,
       cuid: Int,
       plan: String,
-      authorization: String
+      uid: Int
   ): Unit =
-    units.start(cuid, plan, authorization) match {
+    units.start(cuid, plan, uid) match {
       case Taken =>
         logger.info(s"Execution ${eid.id} is started on computing unit $cuid.")
       case Refused(why) =>

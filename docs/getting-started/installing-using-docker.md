@@ -88,7 +88,7 @@ If you don't want to have these examples pre-created, run the following command 
 docker compose up
 ```
 
-> If you see the error message like `unable to get image 'nginx:alpine': Cannot connect to the Docker daemon at unix:///Users/kunwoopark/.docker/run/docker.sock. Is the docker daemon running?`, please make sure Docker Desktop is installed and running
+> If you see the error message like `unable to get image 'envoyproxy/envoy:distroless-v1.36.4': Cannot connect to the Docker daemon at unix:///Users/kunwoopark/.docker/run/docker.sock. Is the docker daemon running?`, please make sure Docker Desktop is installed and running
 
 > When you start Texera for the first time, it will take around 5 minutes to download needed images.
 

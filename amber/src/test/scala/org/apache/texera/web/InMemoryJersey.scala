@@ -33,12 +33,14 @@ import javax.ws.rs.core.{MediaType, SecurityContext}
 /**
   * Hands requests to the Jersey application `config` describes, in memory, as the servlet
   * container hands them to it under `/api`: no port is bound and no resource is called unless a
-  * request gets through its filters. Each request carries a JSON body `{}`, and no credentials
-  * unless it is given a token.
+  * request gets through its filters. Each request carries a JSON body `{}`, and the headers it
+  * is given: no credentials unless it is given a token.
   *
-  * A request to a path and method some resource serves with `@RolesAllowed` is answered 401 by the
-  * JWT filter, after Jersey matched it; one that no resource serves is answered 404 or 405 before
-  * any filter. So the status tells a route that resolves from one that does not.
+  * In an application that checks tokens, a request to a path and method some resource serves
+  * with `@RolesAllowed` is answered 401 by the JWT filter, after Jersey matched it; one that no
+  * resource serves is answered 404 or 405 before any filter. So the status tells a route that
+  * resolves from one that does not. An application that checks none, as a computing unit's,
+  * answers a route that resolves through its resource.
   *
   * The application is built from a copy of `config`: building it locks the configuration it is
   * given, and the environment's must stay as it is for whatever else reads it.
@@ -66,7 +68,19 @@ final class InMemoryJersey(config: ResourceConfig, json: Option[ObjectMapper] = 
     * The status the application answers `method` on `path`, a path below `/api`, with: to a
     * request that carries no credentials, or `token` as its bearer.
     */
-  def statusOf(method: String, path: String, token: Option[String] = None): Int = {
+  def statusOf(method: String, path: String, token: Option[String] = None): Int =
+    answerOf(method, path, token.map(bearer => "Authorization" -> s"Bearer $bearer").toMap)._1
+
+  /**
+    * What the application answers `method` on `path`, a path below `/api`, to a request that
+    * carries `headers` and an empty JSON object as its body: the status, and the entity as the
+    * resource answered it, null when it answered none.
+    */
+  def answerOf(
+      method: String,
+      path: String,
+      headers: Map[String, String] = Map.empty
+  ): (Int, AnyRef) = {
     val request = new ContainerRequest(
       URI.create("http://localhost/api/"),
       URI.create(s"http://localhost/api$path"),
@@ -75,8 +89,9 @@ final class InMemoryJersey(config: ResourceConfig, json: Option[ObjectMapper] = 
       new MapPropertiesDelegate()
     )
     request.header("Content-Type", MediaType.APPLICATION_JSON)
-    token.foreach(bearer => request.header("Authorization", s"Bearer $bearer"))
+    headers.foreach { case (name, value) => request.header(name, value) }
     request.setEntityStream(new ByteArrayInputStream("{}".getBytes(UTF_8)))
-    handler.apply(request).get().getStatus
+    val answer = handler.apply(request).get()
+    (answer.getStatus, answer.getEntity)
   }
 }

@@ -24,11 +24,11 @@ import jakarta.ws.rs.core._
 import jakarta.ws.rs.{Consumes, DELETE, GET, POST, PUT, Path, Produces}
 import org.apache.texera.auth.JwtParser.parseToken
 import org.apache.texera.auth.SessionUser
-import org.apache.texera.auth.util.{ComputingUnitAccess, HeaderField}
+import org.apache.texera.auth.util.{ComputingUnitAccess, ComputingUnitAddress, HeaderField}
 import org.apache.texera.common.config.{GuiConfig, KubernetesConfig, LLMConfig}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.dao.jooq.generated.enums.PrivilegeEnum
-import org.apache.texera.dao.jooq.generated.tables.daos.{UserJupyterDao, WorkflowComputingUnitDao}
+import org.apache.texera.dao.jooq.generated.tables.daos.UserJupyterDao
 
 import java.net.URI
 import java.util.Optional
@@ -116,9 +116,8 @@ object AccessControlResource extends LazyLogging {
       .mapValues(values => values.asScala.headOption.getOrElse(""))
       .toMap
 
-    logger.info(
-      s"Request URI: ${uriInfo.getRequestUri} and headers: ${headers.getRequestHeaders.asScala} and queryParams: $queryParams"
-    )
+    // Neither the request's URI nor its headers are logged: both carry the user's token.
+    logger.info(s"Checking access to computing unit ${queryParams.getOrElse("cuid", "")}")
 
     val token: String = {
       val qToken = queryParams.get("access-token").filter(_.nonEmpty)
@@ -129,7 +128,6 @@ object AccessControlResource extends LazyLogging {
         .filter(_.nonEmpty)
       qToken.orElse(hToken).getOrElse("")
     }
-    logger.info(s"token extracted from request $token")
     val cuid = queryParams.getOrElse("cuid", "")
     val cuidInt =
       try {
@@ -156,24 +154,18 @@ object AccessControlResource extends LazyLogging {
         return Response.status(Response.Status.FORBIDDEN).build()
     }
 
-    // Dynamic Routing Logic
-    // Route to the URI recorded for the computing unit (written by the managing
-    // service when the pod is created). This recorded URI is the single source
-    // of truth for where the unit is reachable, allowing units to live anywhere
-    // the gateway can route to. If no URI has been recorded, the unit is not
-    // routable and the connection is refused.
-    val cuDao = new WorkflowComputingUnitDao(
-      SqlServer.getInstance().createDSLContext().configuration()
-    )
-    val unit = cuDao.fetchOneByCuid(cuidInt)
-    val recordedUri = Option(unit).flatMap(u => Option(u.getUri)).map(_.trim).filter(_.nonEmpty)
-
-    val targetHost = recordedUri match {
-      case Some(uri) =>
-        logger.info(s"Routing CU $cuidInt to recorded host: $uri")
-        uri
+    // Where the gateway sends the websocket: the unit's address inside the deployment
+    // ([[ComputingUnitAddress]]), the one rule every service reaches a unit by. A unit with no
+    // address is not routable, and the connection is refused.
+    val targetHost = ComputingUnitAddress
+      .of(cuidInt)
+      .flatMap(address => Option(address.getAuthority))
+      .filter(_.nonEmpty) match {
+      case Some(authority) =>
+        logger.info(s"Routing CU $cuidInt to $authority")
+        authority
       case None =>
-        logger.warn(s"Refusing CU $cuidInt: no URI recorded for the computing unit")
+        logger.warn(s"Refusing CU $cuidInt: no address for the computing unit")
         return Response.status(Response.Status.FORBIDDEN).build()
     }
 

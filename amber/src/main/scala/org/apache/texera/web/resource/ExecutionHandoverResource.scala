@@ -20,15 +20,12 @@
 package org.apache.texera.web.resource
 
 import com.typesafe.scalalogging.LazyLogging
-import io.dropwizard.auth.Auth
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
 import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
-import org.apache.texera.auth.SessionUser
 import org.apache.texera.web.service.execution.ExecutionStart
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 
-import javax.annotation.security.RolesAllowed
-import javax.ws.rs.core.{MediaType, Response}
+import javax.ws.rs.core.{Context, HttpHeaders, MediaType, Response}
 import javax.ws.rs.{Consumes, POST, Path, Produces}
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -55,11 +52,12 @@ case class HandoverRefusal(message: String)
 
 /**
   * What the Dashboard service hands a computing unit: the start of an execution, from its plan,
-  * and a change to an operator of a paused one. Each comes with the token of the user it is for.
+  * and a change to an operator of a paused one. Each names the user it is for ([[UnitCaller]]).
   * No client reaches these routes: a deployment routes only the unit's websocket to it.
   *
   * What is handed over and done is answered 204; what is refused, 409 with why
-  * ([[HandoverRefusal]]), and nothing is written for it.
+  * ([[HandoverRefusal]]), and nothing is written for it. A request that names no user is
+  * answered 401.
   *
   * @param workflowServiceOf the service of a workflow's runs on this unit, for a computing unit:
   *                          the one the workflow's sessions share
@@ -91,14 +89,14 @@ class ExecutionHandoverResource(
     */
   @POST
   @Path("/start")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
-  def start(request: StartExecutionRequest, @Auth user: SessionUser): Response = {
+  def start(request: StartExecutionRequest, @Context headers: HttpHeaders): Response = {
+    val user = UnitCaller.required(headers)
     logger.info("Asked to start an execution from its plan.")
     val started =
       try {
         for {
           asked <- Option(request).toRight("The request has no body.")
-          checked <- WorkflowService.checkStart(asked.plan, user.getUser, asked.computingUnitId)
+          checked <- WorkflowService.checkStart(asked.plan, user, asked.computingUnitId)
           run <- workflowServiceOf(checked.workflowId, asked.computingUnitId).startChecked(checked)
         } yield run
       } catch {
@@ -123,8 +121,8 @@ class ExecutionHandoverResource(
     */
   @POST
   @Path("/update")
-  @RolesAllowed(Array("REGULAR", "ADMIN"))
-  def update(request: ApplyUpdateRequest, @Auth user: SessionUser): Response = {
+  def update(request: ApplyUpdateRequest, @Context headers: HttpHeaders): Response = {
+    val user = UnitCaller.required(headers)
     val queued = for {
       change <- Option(request)
         .flatMap(asked => Option(asked.update))
@@ -133,10 +131,7 @@ class ExecutionHandoverResource(
       eid <- executionChangedBy(change).toRight("The change cannot be read.")
       services <-
         holding(eid).flatMap(_._2.services).toRight(s"Execution $eid is not running here.")
-      operator <- services.reconfiguration.applyUpdate(
-        change,
-        Option(user.getUser.getUid).map(_.intValue())
-      )
+      operator <- services.reconfiguration.applyUpdate(change, Some(user.getUid.intValue()))
     } yield operator
     answer("change an operator", queued)
   }

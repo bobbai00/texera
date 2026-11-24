@@ -82,7 +82,7 @@ docker compose up
 
 In a source checkout, run these commands in `bin/single-node/`. You can also run `bin/single-node.sh up` from the repo root (add `--with-examples` for the examples), which starts the same stack in the background.
 
-> If you see the error message like `unable to get image 'nginx:alpine': Cannot connect to the Docker daemon at unix:///Users/kunwoopark/.docker/run/docker.sock. Is the docker daemon running?`, please make sure Docker Desktop is installed and running
+> If you see the error message like `unable to get image 'envoyproxy/envoy:distroless-v1.36.4': Cannot connect to the Docker daemon at unix:///Users/kunwoopark/.docker/run/docker.sock. Is the docker daemon running?`, please make sure Docker Desktop is installed and running
 
 > When you start Texera for the first time, it will take around 5 minutes to download needed images.
 
@@ -183,6 +183,11 @@ When Texera creates an execution, the compiling service makes its plan and finds
 | `CONSTANTS_MAX_LISTED_FILES` | The most files of dataset versions that one operator of a run may list. A workflow that lists more does not compile. A run that lists more than about 18,000 is refused however high this is set: its plan would be larger than the 16 MiB a plan may be. | `10000` |
 | `UDF_PYTHON_ENVIRONMENTS_ROOT` | The directory a computing unit installs Python environments under. | `/tmp/texera-python-environments` |
 | `UDF_PYTHON_ENVIRONMENTS_INSTALL_TIMEOUT_MINUTES` | How long one install may take, in minutes. | `30` |
+
+### Give a computing unit another setting
+A computing unit runs users' code, so it is not given the whole `.env`: it gets only the variables listed under `environment` of `workflow-runtime-coordinator-service` in `docker-compose.yml`, each with the value `.env` gives it. To pass it another variable, add the variable's name to that list.
+
+The computing unit is also on a network of its own. It reaches the lake's catalog and the object store, and only the gateway, the Dashboard service and the agent service reach it.
 
 ### Change the locations of Texera data
 By default, Docker manages Texera's data locations. To change them to your own locations:

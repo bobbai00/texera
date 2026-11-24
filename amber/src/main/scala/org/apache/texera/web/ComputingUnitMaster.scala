@@ -34,9 +34,7 @@ import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.engine.common.{AmberRuntime, Utils}
 import org.apache.texera.amber.util.ObjectMapperUtils
 import org.apache.commons.jcs3.access.exception.InvalidArgumentException
-import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.SqlServer
-import org.apache.texera.web.auth.JwtAuth.setupJwtAuth
 import org.apache.texera.web.resource.{
   ExecutionHandoverResource,
   SyncExecutionResource,
@@ -172,14 +170,8 @@ class ComputingUnitMaster extends io.dropwizard.Application[Configuration] with 
     environment.jersey.register(classOf[SessionHandler])
     environment.servlets.setSessionHandler(new SessionHandler)
 
-    setupJwtAuth(environment)
-
-    environment.jersey.register(
-      new io.dropwizard.auth.AuthValueFactoryProvider.Binder[SessionUser](classOf[SessionUser])
-    )
-    environment.jersey.register(
-      classOf[org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature]
-    )
+    // No token is checked here, and no secret held to check one with: whoever reaches this
+    // unit's port says who its request is for (UnitCaller, ServletAwareConfigurator).
     environment
       .servlets()
       .addServletListeners(

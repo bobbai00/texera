@@ -21,11 +21,7 @@ package org.apache.texera.web.service.execution
 
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
-import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.dao.MockTexeraDB
-import org.apache.texera.dao.jooq.generated.enums.{UserRoleEnum, WorkflowComputingUnitTypeEnum}
-import org.apache.texera.dao.jooq.generated.tables.daos.{UserDao, WorkflowComputingUnitDao}
-import org.apache.texera.dao.jooq.generated.tables.pojos.{User, WorkflowComputingUnit}
+import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.web.service.execution.ComputingUnitClient.{
   Handover,
   Refused,
@@ -33,78 +29,37 @@ import org.apache.texera.web.service.execution.ComputingUnitClient.{
   Unanswered,
   Unreached
 }
-import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.http.{HttpConnectTimeoutException, HttpTimeoutException}
 import java.net.{ConnectException, InetAddress, InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
-import java.sql.Timestamp
 import java.util.concurrent.{ConcurrentLinkedQueue, Executors}
 import scala.concurrent.duration.{Duration, DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
 import scala.util.Using
 
 /**
-  * How the Dashboard service reaches a computing unit ([[ComputingUnitClient]]): where it finds
-  * one, what it sends it over HTTP ([[HttpComputingUnitClient]]), and what it makes of each way
-  * a unit answers or does not. The unit is a server on the loopback interface that answers as
-  * a case says; the rows of the units whose addresses are read are in `MockTexeraDB`.
+  * How the Dashboard service reaches a computing unit ([[ComputingUnitClient]]): what it sends
+  * it over HTTP ([[HttpComputingUnitClient]]), and what it makes of each way a unit answers or
+  * does not. The unit is a server on the loopback interface that answers as a case says. Where
+  * a unit is found is the rule `ComputingUnitAddressSpec` pins, in `common/auth`.
   */
-class ComputingUnitClientSpec
-    extends AnyFlatSpec
-    with Matchers
-    with BeforeAndAfterAll
-    with MockTexeraDB {
+class ComputingUnitClientSpec extends AnyFlatSpec with Matchers {
 
   private val mapper = new ObjectMapper()
 
-  private val ownerUid = 9771
-  private val clusterCuid = 9772
-  private val localCuid = 9773
-  private val unrecordedCuid = 9774
-  private val unknownCuid = 9779
-  private val clusterAddress = "computing-unit-9772.unit-svc.unit-pool.svc.cluster.local:8085"
-
-  override protected def beforeAll(): Unit = {
-    super.beforeAll()
-    initializeDBAndReplaceDSLContext()
-    val cfg = getDSLContext.configuration()
-    val owner = new User
-    owner.setUid(ownerUid)
-    owner.setName(s"unit-client-spec-user-$ownerUid")
-    owner.setEmail(s"unit-client-spec-$ownerUid@example.com")
-    owner.setRole(UserRoleEnum.REGULAR)
-    new UserDao(cfg).insert(owner)
-    Seq(
-      (clusterCuid, WorkflowComputingUnitTypeEnum.kubernetes, clusterAddress),
-      // As the editor records a local unit: where a browser opens its websocket.
-      (localCuid, WorkflowComputingUnitTypeEnum.local, "http://localhost:8080/wsapi"),
-      // As the unit manager leaves a unit it has not addressed yet.
-      (unrecordedCuid, WorkflowComputingUnitTypeEnum.kubernetes, "")
-    ).foreach {
-      case (cuid, unitType, uri) =>
-        val unit = new WorkflowComputingUnit
-        unit.setCuid(cuid)
-        unit.setUid(ownerUid)
-        unit.setName(s"unit-client-spec-unit-$cuid")
-        unit.setCreationTime(new Timestamp(System.currentTimeMillis()))
-        unit.setType(unitType)
-        unit.setUri(uri)
-        unit.setResource("{}")
-        new WorkflowComputingUnitDao(cfg).insert(unit)
-    }
-  }
-
-  override protected def afterAll(): Unit =
-    try closeConnectionPool()
-    finally super.afterAll()
-
-  /** A request a unit was sent. */
+  /**
+    * A request a unit was sent.
+    *
+    * @param userId        its `x-user-id` header; null when it has none
+    * @param authorization its `Authorization` header; null when it has none
+    */
   private case class Sent(
       method: String,
       path: String,
+      userId: String,
       authorization: String,
       contentType: String,
       body: JsonNode
@@ -141,6 +96,7 @@ class ComputingUnitClientSpec
           Sent(
             exchange.getRequestMethod,
             exchange.getRequestURI.getPath,
+            headers.getFirst(HeaderField.UserId),
             headers.getFirst("Authorization"),
             headers.getFirst("Content-Type"),
             mapper.readTree(exchange.getRequestBody.readAllBytes())
@@ -172,23 +128,24 @@ class ComputingUnitClientSpec
         deadline = deadline
       )
 
-  private val authorization = "Bearer the-users-own-token"
+  private val uid = 4711
 
   // --- what it sends ---
 
   "HttpComputingUnitClient.start" should
-    "post the plan to the unit's start route, as the user, and take a 204 as the plan taken" in {
+    "post the plan to the unit's start route, for the user and with no token, and take a 204 as the plan taken" in {
     val plan = """{"formatVersion": 1, "executionId": {"id": "345"}, "operators": []}"""
     Using.resource(new StubUnit(204)) { unit =>
       val client = new ClientOf(unit.address)
 
-      client.start(7, plan, authorization) shouldBe Taken
+      client.start(7, plan, uid) shouldBe Taken
 
       // The unit asked is the one found at the address of the unit the plan is for.
       client.lookedUp.toList shouldBe List(7)
+      // The user is named by id. No token goes to a unit, which could verify none.
       unit.requests.map(sent =>
-        (sent.method, sent.path, sent.authorization, sent.contentType)
-      ) shouldBe List(("POST", "/api/execution/start", authorization, "application/json"))
+        (sent.method, sent.path, sent.userId, sent.authorization, sent.contentType)
+      ) shouldBe List(("POST", "/api/execution/start", "4711", null, "application/json"))
       // The plan as one JSON string, and the unit it is for, as the route reads them.
       val body = unit.requests.head.body
       body.fieldNames().asScala.toSet shouldBe Set("plan", "computingUnitId")
@@ -198,17 +155,17 @@ class ComputingUnitClientSpec
   }
 
   "HttpComputingUnitClient.update" should
-    "post the change to the unit's update route, as the user, and take a 204 as the change taken" in {
+    "post the change to the unit's update route, for the user and with no token, and take a 204 as the change taken" in {
     val change = """{"formatVersion": 1, "executionId": {"id": "345"}, "opId": "limit"}"""
     Using.resource(new StubUnit(204)) { unit =>
       val client = new ClientOf(unit.address)
 
-      client.update(7, change, authorization) shouldBe Taken
+      client.update(7, change, uid) shouldBe Taken
 
       client.lookedUp.toList shouldBe List(7)
       unit.requests.map(sent =>
-        (sent.method, sent.path, sent.authorization, sent.contentType)
-      ) shouldBe List(("POST", "/api/execution/update", authorization, "application/json"))
+        (sent.method, sent.path, sent.userId, sent.authorization, sent.contentType)
+      ) shouldBe List(("POST", "/api/execution/update", "4711", null, "application/json"))
       val body = unit.requests.head.body
       body.fieldNames().asScala.toSet shouldBe Set("update")
       body.get("update").asText() shouldBe change
@@ -220,7 +177,7 @@ class ComputingUnitClientSpec
   /** What a hand-over to a unit that answers `status` with `body` comes to. */
   private def answered(status: Int, body: String = ""): Handover =
     Using.resource(new StubUnit(status, body)) { unit =>
-      new ClientOf(unit.address).start(7, "{}", authorization)
+      new ClientOf(unit.address).start(7, "{}", uid)
     }
 
   "A hand-over" should "be taken when the unit answers any 2xx" in {
@@ -264,7 +221,7 @@ class ComputingUnitClientSpec
 
   it should "be left unanswered when the unit does not answer by the deadline" in {
     Using.resource(new StubUnit(204, delay = 3.seconds)) { unit =>
-      new ClientOf(unit.address, deadline = 300.millis).start(7, "{}", authorization) match {
+      new ClientOf(unit.address, deadline = 300.millis).start(7, "{}", uid) match {
         case Unanswered(late) =>
           late shouldBe an[HttpTimeoutException]
           // Sent, and not a connection that was never made.
@@ -278,73 +235,21 @@ class ComputingUnitClientSpec
   it should "not have reached a unit nothing listens for: nothing was sent" in {
     val gone = Using.resource(new StubUnit(204))(_.address)
 
-    new ClientOf(gone).start(7, "{}", authorization) match {
+    new ClientOf(gone).start(7, "{}", uid) match {
       case Unreached(cause) => cause shouldBe a[ConnectException]
       case other            => fail(s"the hand-over came to $other")
     }
   }
 
   it should "not have reached a unit no address is recorded for, or whose address cannot be read" in {
-    new HttpComputingUnitClient(_ => None).start(7, "{}", authorization) match {
+    new HttpComputingUnitClient(_ => None).start(7, "{}", uid) match {
       case Unreached(cause) =>
         cause shouldBe a[NoSuchElementException]
         cause.getMessage shouldBe "No address is recorded for computing unit 7."
       case other => fail(s"the hand-over came to $other")
     }
     val databaseDown = new IllegalStateException("db down")
-    new HttpComputingUnitClient(_ => throw databaseDown).update(7, "{}", authorization) shouldBe
+    new HttpComputingUnitClient(_ => throw databaseDown).update(7, "{}", uid) shouldBe
       Unreached(databaseDown)
-  }
-
-  // --- where a unit is ---
-
-  "ComputingUnitClient.address" should
-    "be the address a unit Kubernetes runs records, over HTTP unless it names a scheme" in {
-    val configured = "http://workflow-runtime-coordinator-service:8085"
-    def addressOf(recorded: String): Option[URI] =
-      ComputingUnitClient.address(WorkflowComputingUnitTypeEnum.kubernetes, recorded, configured)
-
-    addressOf(clusterAddress) shouldBe Some(new URI(s"http://$clusterAddress"))
-    addressOf(s"  $clusterAddress\n") shouldBe Some(new URI(s"http://$clusterAddress"))
-    addressOf("https://units.example:8443") shouldBe Some(new URI("https://units.example:8443"))
-    // The routes resolve against it.
-    addressOf(clusterAddress).map(_.resolve("/api/execution/start")) shouldBe
-      Some(new URI(s"http://$clusterAddress/api/execution/start"))
-  }
-
-  it should "be none for a unit Kubernetes runs that records no address" in {
-    Seq("", "   ", null).foreach { recorded =>
-      withClue(s"'$recorded': ") {
-        ComputingUnitClient.address(
-          WorkflowComputingUnitTypeEnum.kubernetes,
-          recorded,
-          "http://workflow-runtime-coordinator-service:8085"
-        ) shouldBe None
-      }
-    }
-  }
-
-  it should "be the deployment's one unit for a local unit, whatever it records" in {
-    val configured = "http://workflow-runtime-coordinator-service:8085"
-    // A local unit records where a browser reaches it, which says nothing to a service.
-    Seq("http://localhost:8080/wsapi", "local://test", "", null).foreach { recorded =>
-      withClue(s"$recorded: ") {
-        ComputingUnitClient.address(
-          WorkflowComputingUnitTypeEnum.local,
-          recorded,
-          configured
-        ) shouldBe Some(new URI(configured))
-      }
-    }
-  }
-
-  "ComputingUnitClient.addressOf" should
-    "read a unit's address off its record, and find none where the record gives none or there is no record" in {
-    val configured = new URI(ApplicationConfig.computingUnitEndpoint)
-
-    ComputingUnitClient.addressOf(clusterCuid) shouldBe Some(new URI(s"http://$clusterAddress"))
-    ComputingUnitClient.addressOf(localCuid) shouldBe Some(configured)
-    ComputingUnitClient.addressOf(unrecordedCuid) shouldBe None
-    ComputingUnitClient.addressOf(unknownCuid) shouldBe None
   }
 }

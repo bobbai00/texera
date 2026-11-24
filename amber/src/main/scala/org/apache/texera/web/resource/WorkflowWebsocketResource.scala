@@ -38,37 +38,55 @@ import scala.jdk.CollectionConverters.MapHasAsScala
 import scala.util.Try
 import scala.util.control.NonFatal
 
+object WorkflowWebsocketResource {
+
+  /** Why a websocket with no identity from the gateway is closed. */
+  val NotThroughGateway = "A computing unit is reached through the gateway."
+}
+
 @ServerEndpoint(
   value = "/wsapi/workflow-websocket",
   configurator = classOf[ServletAwareConfigurator]
 )
 class WorkflowWebsocketResource extends LazyLogging {
 
+  /**
+    * Opens a session on the workflow and the computing unit its address names, with the access
+    * the gateway said its user has ([[ServletAwareConfigurator]]): READ or WRITE. A socket
+    * that came another way has none, and is closed: this unit checks no token of its own.
+    */
   @OnOpen
-  def myOnOpen(session: Session, config: EndpointConfig): Unit = {
-    val sessionState = new SessionState(session)
-    SessionState.setState(session.getId, sessionState)
-    val wid = session.getRequestParameterMap.get("wid").get(0).toLong
-    val cuid = session.getRequestParameterMap.get("cuid").get(0).toInt
-    val cuAccessEnum: PrivilegeEnum = PrivilegeEnum.valueOf(
-      session.getUserProperties
-        .get(HeaderField.UserComputingUnitAccess)
-        .asInstanceOf[String]
-    )
+  def myOnOpen(session: Session, config: EndpointConfig): Unit =
+    Option(session.getUserProperties.get(HeaderField.UserComputingUnitAccess))
+      .flatMap(access => Try(PrivilegeEnum.valueOf(access.toString)).toOption)
+      .filter(_ != PrivilegeEnum.NONE) match {
+      case None =>
+        logger.warn("Closed a websocket that did not come through the gateway.")
+        session.close(
+          new CloseReason(
+            CloseReason.CloseCodes.VIOLATED_POLICY,
+            WorkflowWebsocketResource.NotThroughGateway
+          )
+        )
+      case Some(cuAccessEnum) =>
+        val sessionState = new SessionState(session)
+        SessionState.setState(session.getId, sessionState)
+        val wid = session.getRequestParameterMap.get("wid").get(0).toLong
+        val cuid = session.getRequestParameterMap.get("cuid").get(0).toInt
 
-    sessionState.setUserComputingUnitAccess(cuAccessEnum)
-    sessionState.setComputingUnitId(cuid)
-    logger.info(
-      s"Websocket connection opened for workflow $wid with computing unit $cuid and access $cuAccessEnum"
-    )
-    // hack to refresh frontend run button state: the state of no run, before the session is told
-    // the state of the run the workflow's service holds, if it holds one
-    sessionState.send(WorkflowStateEvent("Uninitialized", executionId = None))
-    val workflowState =
-      WorkflowService.getOrCreate(WorkflowIdentity(wid), cuid)
-    sessionState.subscribe(workflowState)
-    sessionState.send(ClusterStatusUpdateEvent(ClusterListener.numWorkerNodesInCluster))
-  }
+        sessionState.setUserComputingUnitAccess(cuAccessEnum)
+        sessionState.setComputingUnitId(cuid)
+        logger.info(
+          s"Websocket connection opened for workflow $wid with computing unit $cuid and access $cuAccessEnum"
+        )
+        // hack to refresh frontend run button state: the state of no run, before the session is
+        // told the state of the run the workflow's service holds, if it holds one
+        sessionState.send(WorkflowStateEvent("Uninitialized", executionId = None))
+        val workflowState =
+          WorkflowService.getOrCreate(WorkflowIdentity(wid), cuid)
+        sessionState.subscribe(workflowState)
+        sessionState.send(ClusterStatusUpdateEvent(ClusterListener.numWorkerNodesInCluster))
+    }
 
   @OnClose
   def myOnClose(session: Session, cr: CloseReason): Unit = {

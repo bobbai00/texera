@@ -20,6 +20,7 @@ package org.apache.texera
 import jakarta.ws.rs.core.{HttpHeaders, MultivaluedHashMap, Response, UriInfo}
 import org.apache.texera.auth.JwtAuth
 import org.apache.texera.auth.util.HeaderField
+import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.enums.{
   PrivilegeEnum,
@@ -158,6 +159,19 @@ class AccessControlResourceSpec
     cu
   }
 
+  // A local computing unit, as the editor records one: at the address a browser opens its
+  // websocket at. That address says nothing to the gateway: a local unit is the one unit of its
+  // deployment, at the endpoint the deployment configures.
+  private val testCULocal: WorkflowComputingUnit = {
+    val cu = new WorkflowComputingUnit()
+    cu.setUid(2)
+    cu.setType(WorkflowComputingUnitTypeEnum.local)
+    cu.setCuid(7)
+    cu.setName("test-cu-local")
+    cu.setUri("http://localhost:8080/wsapi")
+    cu
+  }
+
   private var token: String = _
 
   // A token for the *other* user. Tests that must tell "the authenticated user" apart
@@ -179,10 +193,11 @@ class AccessControlResourceSpec
     computingUnitDao.insert(testCUReadOnly)
     // Deliberately inserted with NO computing_unit_user_access row for testUser1.
     computingUnitDao.insert(testCUNoAccess)
+    computingUnitDao.insert(testCULocal)
 
     // Grant testUser1 WRITE access to every test computing unit so the routing
     // logic (not the access check) is what each routing test exercises.
-    Seq(testCU, testCUNoUri, testCUBlankUri).foreach { cu =>
+    Seq(testCU, testCUNoUri, testCUBlankUri, testCULocal).foreach { cu =>
       val cuAccess = new ComputingUnitUserAccess()
       cuAccess.setUid(testUser1.getUid)
       cuAccess.setCuid(cu.getCuid)
@@ -350,18 +365,35 @@ class AccessControlResourceSpec
     response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
   }
 
-  it should "refuse the connection when no URI is recorded for the computing unit" in {
+  it should "refuse the connection when no address is recorded for a unit Kubernetes runs" in {
     val (uri, headers) = mockRequest(testPath, Some(testCUNoUri.getCuid.toString))
     val response = new AccessControlResource().authorizeGet(uri, headers)
 
     response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
   }
 
-  it should "refuse the connection when the recorded URI is blank" in {
+  it should "refuse the connection when the address recorded for a unit Kubernetes runs is blank" in {
     val (uri, headers) = mockRequest(testPath, Some(testCUBlankUri.getCuid.toString))
     val response = new AccessControlResource().authorizeGet(uri, headers)
 
     response.getStatus shouldBe Response.Status.FORBIDDEN.getStatusCode
+  }
+
+  it should "route a local computing unit to the deployment's one unit, whatever address it records" in {
+    val (uri, headers) = mockRequest(testPath, Some(testCULocal.getCuid.toString))
+    val response = new AccessControlResource().authorizeGet(uri, headers)
+
+    response.getStatus shouldBe Response.Status.OK.getStatusCode
+    response.getHeaderString(
+      HeaderField.UserComputingUnitAccess
+    ) shouldBe PrivilegeEnum.WRITE.toString
+    // The authority of the endpoint the deployment configures for its unit
+    // (web-server.computing-unit-endpoint), which is where the Dashboard service hands the
+    // unit its plans too: not the address a browser reaches the unit at, which its row holds.
+    val configured = new URI(ApplicationConfig.computingUnitEndpoint).getAuthority
+    configured should not be empty
+    response.getHeaderString("Host") shouldBe configured
+    response.getHeaderString("Host") should not include "wsapi"
   }
 
   /**

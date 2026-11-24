@@ -33,36 +33,29 @@ import javax.websocket.server.{HandshakeRequest, ServerEndpointConfig}
 import scala.jdk.CollectionConverters._
 
 /**
-  * Unit tests for the websocket handshake configurator, which is the single place a websocket
-  * connection acquires its identity. It runs in two mutually exclusive modes:
+  * The websocket handshake configurator, the one place a websocket to a computing unit gets its
+  * identity: the access and the user the gateway names in the `x-user-*` headers, once the
+  * access control service has checked the user's token. A unit verifies no token, so a
+  * handshake that carries no such identity gets none, whatever else it carries.
   *
-  *   - KUBERNETES, selected when all four `x-user-*` headers are present. Envoy is trusted to have
-  *     authenticated the caller, so the user is built straight from header values.
-  *   - SINGLE NODE otherwise, where the identity comes from an `access-token` JWT in the query
-  *     string and the computing-unit privilege is hard-coded to WRITE.
+  * What the configurator writes goes into `ServerEndpointConfig.getUserProperties`, the map
+  * `WorkflowWebsocketResource.myOnOpen` and `myOnMsg` read: the access under
+  * [[HeaderField.UserComputingUnitAccess]], and the user under `User`'s class name. Every
+  * assertion reads values back out of that map. A session whose map holds no access is closed
+  * by `myOnOpen` (`WorkflowWebsocketResourceSpec`).
   *
-  * Both modes write into `ServerEndpointConfig.getUserProperties`, which is the map
-  * `WorkflowWebsocketResource.myOnOpen`/`myOnMsg` later read. Every assertion below therefore reads
-  * values back OUT of that map rather than trusting an intermediate.
-  *
-  * Tokens are minted with the production `JwtAuth.jwtToken`, so they verify against the very
-  * consumer the configurator uses, whatever `auth.jwt.256-bit-secret` resolves to in this JVM (the
-  * same trick `JwtParserSpec` uses). No socket, container, database or filesystem is involved.
-  *
-  * Deliberately not asserted: the exact wording of the info/debug log lines. They are not a
-  * contract, and pinning them would break on any rewording. (Worth reporting rather than testing:
-  * the info line writes the user's e-mail address into the log.)
+  * The tokens here are minted with the production `JwtAuth.jwtToken`, so they are ones every
+  * service that checks tokens accepts: that a unit makes nothing of them is its own doing. No
+  * socket, container, database or filesystem is involved.
   */
 class ServletAwareConfiguratorSpec extends AnyFlatSpec with Matchers with MockFactory {
 
   private val userId = "77"
-  private val userName = "k8s-subject"
-  private val userEmail = "k8s-mail@example.com"
+  private val userName = "gateway-subject"
+  private val userEmail = "gateway-mail@example.com"
 
-  /** All four headers the kubernetes branch requires, each value distinct from the others. */
-  private val k8sHeaders: Map[String, Seq[String]] = Map(
-    // READ, never WRITE: WRITE is what the single-node branch hard-codes, so a test that fed WRITE
-    // here could not tell the two branches apart.
+  /** The four headers the gateway sets, each value distinct from the others. */
+  private val gatewayHeaders: Map[String, Seq[String]] = Map(
     HeaderField.UserComputingUnitAccess -> Seq(PrivilegeEnum.READ.name()),
     HeaderField.UserId -> Seq(userId),
     HeaderField.UserName -> Seq(userName),
@@ -88,21 +81,21 @@ class ServletAwareConfiguratorSpec extends AnyFlatSpec with Matchers with MockFa
   private def userIn(properties: java.util.Map[String, AnyRef]): User =
     properties.get(classOf[User].getName).asInstanceOf[User]
 
+  /** A token every service that checks tokens accepts, for user `uid`. */
   private def tokenFor(subject: String, uid: Int, email: String): String = {
     val claims = new JwtClaims
     claims.setSubject(subject)
     claims.setClaim("userId", uid)
     claims.setClaim("email", email)
-    // The shared consumer is built with setRequireExpirationTime(); an exp-less token is rejected.
     claims.setExpirationTimeMinutesInTheFuture(10f)
     JwtAuth.jwtToken(claims)
   }
 
   /**
     * amber ships no logback-test.xml, so `amber/src/main/resources/logback.xml` governs this JVM
-    * and pins `org.apache` at WARN — which leaves the info/debug lines of the kubernetes branch
-    * unexecuted. Raising this one logger for the duration of a single call executes them. The
-    * previous level is restored in `finally` because every amber suite shares one JVM.
+    * and pins `org.apache` at WARN, which leaves the configurator's info line unexecuted. Raising
+    * this one logger for the duration of a single call executes it. The previous level is
+    * restored in `finally` because every amber suite shares one JVM.
     */
   private def withDebugLogging[T](body: => T): T = {
     val logger = org.slf4j.LoggerFactory
@@ -114,33 +107,31 @@ class ServletAwareConfiguratorSpec extends AnyFlatSpec with Matchers with MockFa
     finally logger.setLevel(previousLevel)
   }
 
-  // -- kubernetes mode ----------------------------------------------------------
-
-  "modifyHandshake" should "build the user from the trusted headers in kubernetes mode" in {
-    val (config, request, properties) = handshake(headers = k8sHeaders)
+  "modifyHandshake" should "take the access and the user from the headers the gateway sets" in {
+    val (config, request, properties) = handshake(headers = gatewayHeaders)
 
     withDebugLogging {
       new ServletAwareConfigurator().modifyHandshake(config, request, null)
     }
 
-    // Read back by key: the privilege and the user live under two different keys, and both
-    // `myOnOpen` (privilege) and `myOnMsg` (user) look them up by exactly these names.
+    // Read back by key: the access and the user live under two different keys, and `myOnOpen`
+    // (the access) and `myOnMsg` (the user) look them up by exactly these names.
     properties.get(HeaderField.UserComputingUnitAccess) shouldBe PrivilegeEnum.READ.name()
     val user = userIn(properties)
     // Three mutually distinct values, so a setName/setEmail transposition cannot pass.
     user.getUid.intValue() shouldBe userId.toInt
     user.getName shouldBe userName
     user.getEmail shouldBe userEmail
+    properties.keySet.asScala shouldBe
+      Set(HeaderField.UserComputingUnitAccess, classOf[User].getName)
   }
 
   it should "take the first value of a repeated header, not the last" in {
-    // HTTP headers are legitimately multi-valued, and `_.asScala.headOption` is what decides WHICH
-    // occurrence wins. In kubernetes mode that choice decides the identity and the privilege a
-    // websocket is granted, so a duplicate appended after Envoy's own must not be able to override
-    // it. `k8sHeaders` gives every header exactly one value, where head and last agree, so nothing
-    // else here can see the difference.
+    // HTTP headers are legitimately multi-valued, and the first occurrence is the one that
+    // decides the identity and the access a websocket is given: a duplicate appended after the
+    // gateway's own must not override it.
     val (config, request, properties) = handshake(headers =
-      k8sHeaders ++ Map(
+      gatewayHeaders ++ Map(
         HeaderField.UserId -> Seq(userId, "99"),
         HeaderField.UserComputingUnitAccess -> Seq(
           PrivilegeEnum.READ.name(),
@@ -155,100 +146,84 @@ class ServletAwareConfiguratorSpec extends AnyFlatSpec with Matchers with MockFa
     userIn(properties).getUid.intValue() shouldBe userId.toInt
   }
 
-  it should "write an empty privilege string that myOnOpen cannot parse when the access header carries no value" in {
-    // CHARACTERIZATION OF A DEFECT, NOT A CONTRACT — and a strict fix SHOULD turn this test red.
-    //
-    // Reachability: the enclosing guard only checks that the key is PRESENT, so an empty value list
-    // still selects the kubernetes branch and the privilege falls through to `getOrElse("")`. No
-    // servlet container produces that shape: a header that is present always carries at least one
-    // value, `""` at worst, which yields `Some("")` rather than None. The fallback is therefore
-    // defensive dead code, reachable only by handing `getHeaders` an empty list directly as below.
-    //
-    // What it produces is not a graceful default but a deferred crash: `PrivilegeEnum` is a Java
-    // enum, so `WorkflowWebsocketResource.myOnOpen`'s `PrivilegeEnum.valueOf` on this value throws
-    // straight out of the @OnOpen handler. The last assertion records that consequence, so that
-    // changing the fallback to `PrivilegeEnum.NONE.name()` reads as the fix it would be.
-    val (config, request, properties) =
-      handshake(headers = k8sHeaders + (HeaderField.UserComputingUnitAccess -> Seq.empty))
-
-    new ServletAwareConfigurator().modifyHandshake(config, request, null)
-
-    properties.get(HeaderField.UserComputingUnitAccess) shouldBe ""
-    // The user is still built: the fallback must not abort the branch.
-    userIn(properties).getName shouldBe userName
-    an[IllegalArgumentException] should be thrownBy PrivilegeEnum.valueOf(
-      properties.get(HeaderField.UserComputingUnitAccess).asInstanceOf[String]
-    )
-  }
-
-  it should "fall back to single-node mode when any one of the four headers is missing" in {
-    // One case per header, because a single "none of them present" case only proves the
-    // conjunction is false — it would stay green with any one of the four `contains` calls deleted.
-    k8sHeaders.keys.foreach { missing =>
+  it should "need the access and the user's id alone: a name or an e-mail address left out stays unset" in {
+    Seq(HeaderField.UserName, HeaderField.UserEmail).foreach { missing =>
       withClue(s"with $missing missing: ") {
-        val (config, request, properties) =
-          handshake(headers = k8sHeaders - missing, queryString = "wid=1&cuid=2")
+        val (config, request, properties) = handshake(headers = gatewayHeaders - missing)
 
         new ServletAwareConfigurator().modifyHandshake(config, request, null)
 
-        // WRITE is the single-node constant; the surviving headers say READ, so the value in the
-        // map names which branch ran. (With `x-user-id` or `x-user-name`/`x-user-email` missing the
-        // kubernetes branch would instead throw before writing anything, leaving the map empty.)
-        properties.get(HeaderField.UserComputingUnitAccess) shouldBe PrivilegeEnum.WRITE.name()
-        properties.containsKey(classOf[User].getName) shouldBe false
+        properties.get(HeaderField.UserComputingUnitAccess) shouldBe PrivilegeEnum.READ.name()
+        val user = userIn(properties)
+        user.getUid.intValue() shouldBe userId.toInt
+        (user.getName, user.getEmail) shouldBe (
+          if (missing == HeaderField.UserName) (null, userEmail) else (userName, null)
+        )
       }
     }
   }
 
-  // -- single-node mode ---------------------------------------------------------
+  it should "give a handshake no access and no user when the access or the user's id is missing, has no value, or the id is no number" in {
+    // Whichever of the two is unusable, nothing at all reaches the map: no access without a
+    // user, and no user without an access. `myOnOpen` closes a session it finds no access for.
+    Seq(
+      "no access" -> (gatewayHeaders - HeaderField.UserComputingUnitAccess),
+      "no user id" -> (gatewayHeaders - HeaderField.UserId),
+      "an access header with no value" ->
+        (gatewayHeaders + (HeaderField.UserComputingUnitAccess -> Seq.empty)),
+      "a user id header with no value" -> (gatewayHeaders + (HeaderField.UserId -> Seq.empty)),
+      "a user id that is no number" -> (gatewayHeaders + (HeaderField.UserId -> Seq("texera"))),
+      "no header at all" -> Map.empty[String, Seq[String]]
+    ).foreach {
+      case (what, headers) =>
+        withClue(s"$what: ") {
+          val (config, request, properties) = handshake(headers = headers)
 
-  it should "build the user from the access-token query parameter in single-node mode" in {
-    // The token is surrounded by other parameters on purpose: with it alone in the query string a
-    // naive "the query string IS the token" implementation would pass too.
-    val token = tokenFor("token-subject", 4242, "token-mail@example.com")
+          noException should be thrownBy
+            new ServletAwareConfigurator().modifyHandshake(config, request, null)
+
+          properties.keySet.asScala shouldBe empty
+        }
+    }
+  }
+
+  it should "read a padded user id as the number it holds" in {
     val (config, request, properties) =
-      handshake(queryString = s"wid=1&access-token=$token&cuid=2")
+      handshake(headers = gatewayHeaders + (HeaderField.UserId -> Seq(s" $userId ")))
 
     new ServletAwareConfigurator().modifyHandshake(config, request, null)
 
-    properties.get(HeaderField.UserComputingUnitAccess) shouldBe PrivilegeEnum.WRITE.name()
-    val user = userIn(properties)
-    // The uid claim survives a JSON round trip as a Long, which is why the production cast is to
-    // Long and not Integer; asserting the Int value pins the narrowing too.
-    user.getUid.intValue() shouldBe 4242
-    user.getName shouldBe "token-subject"
-    user.getEmail shouldBe "token-mail@example.com"
+    userIn(properties).getUid.intValue() shouldBe userId.toInt
   }
 
-  // -- the catch arm ------------------------------------------------------------
-
-  it should "swallow a malformed user-id header, leaving the properties untouched" in {
-    // "no exception escaped" on its own would pass with the whole method body deleted, so the
-    // assertion that carries the weight is the PARTIAL state the failure leaves behind: the parse
-    // of `x-user-id` happens before any write, so nothing at all reaches the map.
-    val (config, request, properties) =
-      handshake(headers = k8sHeaders + (HeaderField.UserId -> Seq("not-a-number")))
-
-    noException should be thrownBy
-      new ServletAwareConfigurator().modifyHandshake(config, request, null)
-
-    properties.keySet.asScala shouldBe empty
-  }
-
-  it should "swallow a tampered access token, keeping the privilege it already granted" in {
-    // The other half of the partial-state contract: the single-node branch writes the privilege
-    // BEFORE it parses the token, so a rejected token leaves that entry behind and no user.
+  it should "read no token: a handshake that carries only one gets no access and no user" in {
+    // A token every service accepts, where a browser puts it on the socket's address and where
+    // an HTTP client puts it. The gateway reads it there, checks it, and sets the headers; a
+    // handshake that reaches a unit with the token alone did not come through the gateway.
     val token = tokenFor("token-subject", 4242, "token-mail@example.com")
-    val parts = token.split('.')
-    parts.length shouldBe 3
-    val tampered = s"${parts(0)}.${parts(1)}.${parts(2).reverse}"
-    val (config, request, properties) =
-      handshake(queryString = s"wid=1&access-token=$tampered&cuid=2")
+    Seq(
+      "in the query" ->
+        handshake(queryString = s"wid=1&access-token=$token&cuid=2"),
+      "in the Authorization header" ->
+        handshake(
+          headers = Map("Authorization" -> Seq(s"Bearer $token")),
+          queryString = "wid=1&cuid=2"
+        ),
+      "in both, with the user's id but no access" ->
+        handshake(
+          headers = Map(
+            "Authorization" -> Seq(s"Bearer $token"),
+            HeaderField.UserId -> Seq("4242")
+          ),
+          queryString = s"wid=1&access-token=$token&cuid=2"
+        )
+    ).foreach {
+      case (where, (config, request, properties)) =>
+        withClue(s"$where: ") {
+          new ServletAwareConfigurator().modifyHandshake(config, request, null)
 
-    noException should be thrownBy
-      new ServletAwareConfigurator().modifyHandshake(config, request, null)
-
-    properties.get(HeaderField.UserComputingUnitAccess) shouldBe PrivilegeEnum.WRITE.name()
-    properties.containsKey(classOf[User].getName) shouldBe false
+          properties.keySet.asScala shouldBe empty
+        }
+    }
   }
 }

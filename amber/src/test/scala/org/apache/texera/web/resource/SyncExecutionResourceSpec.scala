@@ -69,7 +69,7 @@ import org.apache.texera.amber.operator.{FixtureInputs, TestOperators}
 import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
-import org.apache.texera.auth.SessionUser
+import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.MockTexeraDB
@@ -107,6 +107,8 @@ import org.scalatest.{BeforeAndAfterAll, PrivateMethodTester}
 import java.net.URI
 import java.sql.Timestamp
 import java.util.concurrent.{ConcurrentLinkedQueue, FutureTask, TimeUnit}
+import javax.ws.rs.WebApplicationException
+import javax.ws.rs.core.HttpHeaders
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.jdk.CollectionConverters._
@@ -1122,11 +1124,15 @@ class SyncExecutionResourceSpec
         expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
       )
 
-  private def syncUser(uid: Int = testUid): SessionUser = {
+  /** The headers of a wait for user `uid`: all the route reads of its caller. */
+  private def syncUser(uid: Int = testUid): HttpHeaders = CallerHeaders.of(uid)
+
+  /** User `uid`, as the Dashboard service creates an execution for them and a unit starts it. */
+  private def userOf(uid: Int = testUid): User = {
     val user = new User
     user.setUid(Integer.valueOf(uid))
     user.setEmail(s"sync-exec-$uid@example.com")
-    new SessionUser(user)
+    user
   }
 
   /**
@@ -1159,7 +1165,7 @@ class SyncExecutionResourceSpec
           replayFromExecution = None,
           targetOperatorId = Some("limit")
         ),
-        syncUser().getUser,
+        userOf(),
         new URI("http://texera.example/api/executions"),
         FixtureCompilingService.authorizationOf(testUid)
       )
@@ -1234,7 +1240,7 @@ class SyncExecutionResourceSpec
       uid: Int = testUid
   ): WorkflowExecutionService =
     WorkflowService
-      .checkStart(execution.plan, syncUser(uid).getUser, testCuid)
+      .checkStart(execution.plan, userOf(uid), testCuid)
       .flatMap(service.startChecked)
       .fold(why => fail(s"the start was refused: $why"), identity)
 
@@ -1423,6 +1429,31 @@ class SyncExecutionResourceSpec
     startOn(service, second)
     refusalOf(resource.awaitExecution(first.eid, waitRequest(), syncUser())) shouldBe
       s"Execution ${first.eid} is not running here."
+  }
+
+  it should "answer 401 to a wait that names no user, whatever else it carries, and leave the run as it is" in {
+    val execution = createdExecution()
+    val service = new EnginelessService(atStart = _.transitionTo(RUNNING))
+    val resource = new ResourceOn(service)
+    val run = startOn(service, execution)
+
+    Seq(
+      CallerHeaders.none,
+      // A token is nothing a unit reads: the wait still names nobody.
+      CallerHeaders.holding(Map("Authorization" -> "Bearer a-users-own-token")),
+      CallerHeaders.holding(Map(HeaderField.UserId -> "texera"))
+    ).foreach { headers =>
+      withClue(s"$headers: ") {
+        val refused = the[WebApplicationException] thrownBy
+          resource.awaitExecution(execution.eid, waitRequest(timeoutSeconds = 1), headers)
+        refused.getResponse.getStatus shouldBe 401
+        refused.getResponse.getEntity shouldBe HandoverRefusal(UnitCaller.NoUser)
+      }
+    }
+
+    // Nobody waited, so nobody watched, and the wait's time ran out on nothing.
+    service.mostWatchers shouldBe 0
+    run.executionStateStore.metadataStore.getState.state shouldBe RUNNING
   }
 
   it should "wait, as the unit serves it, for the runs the unit's own workflow services hold" in {

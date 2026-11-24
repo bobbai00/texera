@@ -44,8 +44,6 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
   RUNNING
 }
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
-import org.apache.texera.auth.SessionUser
-import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.WorkflowLifecycleManager
 import org.apache.texera.web.service.WorkflowExecutionService.RunServices
 import org.apache.texera.web.service.{
@@ -59,7 +57,8 @@ import org.scalatest.matchers.should.Matchers
 
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
-import javax.ws.rs.core.Response
+import javax.ws.rs.WebApplicationException
+import javax.ws.rs.core.{HttpHeaders, Response}
 import scala.collection.mutable.ArrayBuffer
 
 /**
@@ -68,7 +67,8 @@ import scala.collection.mutable.ArrayBuffer
   * operator of a paused one.
   *
   * What is pinned here is the routes' own: which workflow's service a start is taken on and for
-  * whom, which run a change goes to and as whom, and how each is answered, 204 or 409 with why.
+  * whom, which run a change goes to and as whom, and how each is answered, 204 or 409 with why,
+  * and 401 when the request names no user.
   * The plans and the change are written here, as the Dashboard service writes them, and the
   * services' runs have no engine. What the rest does is owned elsewhere: every check a start
   * makes of a plan by `ExecutionStartSpec`, what taking a start does to the run a service holds
@@ -84,12 +84,8 @@ class ExecutionHandoverResourceSpec extends AnyFlatSpec with Matchers {
   private val starterUid = 9764
   private val firstEid = 976100L
 
-  private def caller(uid: Int = starterUid): SessionUser = {
-    val user = new User
-    user.setUid(Integer.valueOf(uid))
-    user.setEmail(s"handover-spec-$uid@example.com")
-    new SessionUser(user)
-  }
+  /** The headers of a request for user `uid`: all a route reads of its caller. */
+  private def caller(uid: Int = starterUid): HttpHeaders = CallerHeaders.of(uid)
 
   /** A source of one string column, of execution `eid` of workflow `workflow`. */
   private def lines(workflow: Long, eid: Long): PhysicalOp =
@@ -460,5 +456,38 @@ class ExecutionHandoverResourceSpec extends AnyFlatSpec with Matchers {
       neverSetUp.update(ApplyUpdateRequest(changeOf(eid)), caller()),
       s"Execution $eid is not running here."
     )
+  }
+
+  // --- who a request is for ---
+
+  "A request that names no user" should
+    "be answered 401 by each route, whatever else it carries, and have nothing done for it" in {
+    val eid = firstEid + 80
+    val service = new EnginelessService()
+    val starting = new Routes(Map(wid -> service))
+    val changes = new AnsweringChanges(Right("lines"))
+    val changing = new Routes(Map(wid -> holding(eid, Some(changes))))
+
+    def assertUnauthorized(ask: => Response): Unit = {
+      val refused = the[WebApplicationException] thrownBy ask
+      refused.getResponse.getStatus shouldBe 401
+      refused.getResponse.getEntity shouldBe HandoverRefusal("The request names no user.")
+    }
+
+    Seq(
+      CallerHeaders.none,
+      // A token is nothing a unit reads: the request still names nobody.
+      CallerHeaders.holding(Map("Authorization" -> "Bearer a-users-own-token")),
+      CallerHeaders.holding(Map("x-user-id" -> "texera"))
+    ).foreach { headers =>
+      withClue(s"$headers: ") {
+        assertUnauthorized(starting.start(StartExecutionRequest(planOf(eid), unitCuid), headers))
+        assertUnauthorized(changing.update(ApplyUpdateRequest(changeOf(eid)), headers))
+      }
+    }
+
+    starting.asked shouldBe empty
+    service.started shouldBe empty
+    changes.asked shouldBe empty
   }
 }

@@ -21,7 +21,7 @@ import { z } from "zod";
 import { tool } from "ai";
 import { createErrorResult, formatOperatorOutput, getOperatorErrorText } from "./tools-utility";
 import type { WorkflowState } from "../workflow-state";
-import { createAuthHeaders } from "../../api/auth-api";
+import { createAuthHeaders, createUnitHeaders } from "../../api/auth-api";
 import { getBackendConfig } from "../../api/backend-api";
 import { env } from "../../config/env";
 import {
@@ -260,7 +260,8 @@ function buildLogicalPlan(workflowState: WorkflowState, opsToViewResult?: string
 /**
  * Runs the workflow as the user, in two calls: the Dashboard service creates the execution and has
  * its computing unit start it, and the unit is then asked to wait for that execution, by its id,
- * and answers with its results.
+ * and answers with its results. The Dashboard is asked with the user's token, which it verifies.
+ * The unit verifies no token: it is told the user's id, the one the token names.
  *
  * The unit is asked only once the Dashboard has answered with the execution: not when it refuses
  * the create, not when the workflow does not compile, not when the unit does not start the
@@ -285,10 +286,14 @@ async function executeWorkflowHttp(
     ? Math.ceil(config.executionTimeoutMs / 1000)
     : Math.ceil(DEFAULT_AGENT_SETTINGS.executionTimeoutMs / 1000);
 
-  const postAsUser = (url: string, body: CreateExecutionRequest | SyncWaitRequest): Promise<Response> =>
+  const post = (
+    url: string,
+    headers: Record<string, string>,
+    body: CreateExecutionRequest | SyncWaitRequest
+  ): Promise<Response> =>
     fetch(url, {
       method: "POST",
-      headers: createAuthHeaders(config.userToken),
+      headers,
       body: JSON.stringify(body),
       signal: options.abortSignal,
     });
@@ -312,7 +317,7 @@ async function executeWorkflowHttp(
     };
 
     log.debug({ url: createUrl, computingUnitId }, "creating execution");
-    const createResponse = await postAsUser(createUrl, createRequest);
+    const createResponse = await post(createUrl, createAuthHeaders(config.userToken), createRequest);
 
     if (!createResponse.ok) {
       const failure = adaptCreateExecutionFailure(
@@ -352,7 +357,7 @@ async function executeWorkflowHttp(
       },
       "waiting for execution"
     );
-    const waitResponse = await postAsUser(waitUrl, waitRequest);
+    const waitResponse = await post(waitUrl, createUnitHeaders(config.userToken), waitRequest);
 
     if (!waitResponse.ok) {
       const errorText = await waitResponse.text();

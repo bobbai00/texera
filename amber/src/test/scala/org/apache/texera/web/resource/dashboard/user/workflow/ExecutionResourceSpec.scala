@@ -807,14 +807,9 @@ class ExecutionResourceSpec
     execution.eid should be > firstCreatedEid.toLong
     // The answer is the execution's id, and nothing of its plan.
     answer.getEntity shouldBe CreateExecutionResponse(execution.eid)
-    // The plan went to the unit the execution was created for, once, as the caller: with the
-    // request's own Authorization header.
+    // The plan went to the unit the execution was created for, once, for the caller.
     handedOver.starts.drop(handedBefore) shouldBe Seq(
-      RecordingComputingUnits.Handed(
-        unitCuid,
-        execution.plan,
-        FixtureCompilingService.authorizationOf(creatorUid)
-      )
+      RecordingComputingUnits.Handed(unitCuid, execution.plan, creatorUid)
     )
 
     val stored = row(execution.eid)
@@ -1583,9 +1578,9 @@ class ExecutionResourceSpec
   private class NotingUnits(answer: Handover) extends RecordingComputingUnits(answer) {
     @volatile var rowsAtHandover: Seq[(String, String, String)] = Nil
 
-    override def start(cuid: Int, plan: String, authorization: String): Handover = {
+    override def start(cuid: Int, plan: String, uid: Int): Handover = {
       rowsAtHandover = ExecutionStart.executionNamedBy(plan).toSeq.flatMap(resultRowsOf)
-      super.start(cuid, plan, authorization)
+      super.start(cuid, plan, uid)
     }
   }
 

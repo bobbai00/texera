@@ -90,7 +90,8 @@ export interface CreateExecutionResponse {
 /**
  * The body of `POST /api/execution/{eid}/wait` on a computing unit. Mirrors amber's
  * `SyncWaitRequest`: wait for execution `eid`, which the Dashboard started on the unit, and answer
- * with what it produced. The unit answers with the legacy sync-execution result, which
+ * with what it produced. The request says who asks in its `x-user-id` header and carries no token:
+ * a unit verifies none. The unit answers with the legacy sync-execution result, which
  * `adaptLegacySyncExecutionResult` reads; a wait for an execution it holds no run of is answered
  * in that shape too, as an error that says why.
  */

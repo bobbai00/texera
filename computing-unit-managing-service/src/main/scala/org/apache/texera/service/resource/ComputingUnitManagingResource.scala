@@ -302,15 +302,14 @@ object ComputingUnitManagingResource {
     }
   }
 
-  // Required: the endpoint defaults to localhost:9092 (pytexera's DatasetFileDocument) and the
-  // secret to a published literal (auth.conf), neither of which suits a real deployment.
-  // Forwarded raw -- the endpoint is trimmed by its own reader, and trimming the secret would
-  // leave the unit and this service verifying the token against different keys, since
-  // AuthConfig does not trim. The file service's upload endpoint is not among them: results
-  // are exported by the Dashboard service, and nothing on a unit reads it.
+  // Required: the endpoint defaults to localhost:9092 (pytexera's DatasetFileDocument), which
+  // does not suit a real deployment. Forwarded raw: the endpoint is trimmed by its own reader.
+  // The file service's upload endpoint is not among them: results are exported by the
+  // Dashboard service, and nothing on a unit reads it. Nor is the secret tokens are signed
+  // with (AUTH_JWT_SECRET): a unit verifies no token, and runs its users' code, which reads
+  // whatever the unit is given.
   private val requiredComputingUnitEnvNames: Seq[String] = Seq(
-    EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT,
-    EnvironmentalVariable.ENV_AUTH_JWT_SECRET
+    EnvironmentalVariable.ENV_FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT
   )
 
   // Overrides, forwarded only when set: each has a default in the unit's own configuration

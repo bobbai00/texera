@@ -593,10 +593,9 @@ class OperatorUpdatesSpec
     val update = made(post(execution.eid, udf(code = changedCode("v2")), updates = updates))
 
     update.operatorId shouldBe "udf"
-    // Handed to the unit the execution was created for, as the caller: with the request's own
-    // Authorization header.
+    // Handed to the unit the execution was created for, for the caller.
     update.handed.cuid shouldBe unitCuid
-    update.handed.authorization shouldBe FixtureCompilingService.authorizationOf(creatorUid)
+    update.handed.uid shouldBe creatorUid
     // What the unit applies: the new code for the running operator, of this execution.
     decoded(update) shouldBe OperatorUpdate(
       ExecutionIdentity(execution.eid),

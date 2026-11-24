@@ -67,7 +67,6 @@ import org.apache.texera.amber.operator.limit.LimitOpDesc
 import org.apache.texera.amber.operator.source.scan.text.TextInputSourceOpDesc
 import org.apache.texera.amber.operator.FixtureInputs
 import org.apache.texera.amber.util.JSONUtils.objectMapper
-import org.apache.texera.auth.SessionUser
 import org.apache.texera.auth.util.HeaderField
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
 import org.apache.texera.dao.{MockTexeraDB, StatementRecorder, WorkflowExecutionStatus}
@@ -136,7 +135,7 @@ import java.sql.{Timestamp => SqlTimestamp}
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.{Future => JFuture}
-import javax.websocket.{RemoteEndpoint, Session}
+import javax.websocket.{CloseReason, RemoteEndpoint, Session}
 import javax.ws.rs.WebApplicationException
 import javax.ws.rs.core.Response
 import scala.collection.mutable.ArrayBuffer
@@ -157,11 +156,11 @@ import scala.util.Try
   *
   *   - the write-access gate. A heartbeat and a read of results are open to every session; every
   *     other request changes a run, and is its sender's to make only with WRITE on the socket's
-  *     computing unit, the privilege `myOnOpen` parsed off the handshake. The gate cannot fire in
-  *     single-node mode, where `ServletAwareConfigurator` hard-codes WRITE, but is live under
-  *     Kubernetes, where the privilege comes from the `x-user-computing-unit-access` header. The
-  *     requests it covers are checked against the mapper's registry, so a request type added
-  *     later has to be placed on one side of the gate here.
+  *     computing unit: the access the gateway set on the handshake
+  *     (`x-user-computing-unit-access`), which `myOnOpen` keeps for the session. A socket the
+  *     gateway set no access on is closed by `myOnOpen`. The requests the gate covers are checked
+  *     against the mapper's registry, so a request type added later has to be placed on one side
+  *     of the gate here.
   *   - what becomes of a frame that is not done. A frame that binds to no request, a request that
   *     is refused and a request that fails are each answered to the session that sent them, and
   *     to it alone, with a `RequestRefusedEvent`: nothing is written into the run in flight,
@@ -1002,6 +1001,48 @@ class WorkflowWebsocketResourceSpec
     states(1).get("executionId").asLong() shouldBe 970199L
   }
 
+  it should "close a socket that came with no access from the gateway, and open nothing for it" in {
+    // A handshake the gateway did not make leaves the session no access
+    // (`ServletAwareConfigurator`): none at all, one that names no privilege, or the privilege
+    // of no access. The unit checks no token of its own, so it has nothing else to open the
+    // socket on.
+    Seq[Option[String]](None, Some(""), Some("ADMIN"), Some("NONE")).zipWithIndex.foreach {
+      case (access, row) =>
+        withClue(s"access=$access: ") {
+          val wid = 970110L + row
+          val (session, sent) = mockSession(wid = wid, cuid = 5)
+          access match {
+            case None => session.getUserProperties.remove(HeaderField.UserComputingUnitAccess)
+            case Some(unreadable) =>
+              session.getUserProperties.put(HeaderField.UserComputingUnitAccess, unreadable)
+          }
+          val closedWith = ArrayBuffer.empty[CloseReason]
+          (session
+            .close(_: CloseReason))
+            .expects(*)
+            .onCall { (reason: CloseReason) =>
+              closedWith += reason
+              ()
+            }
+            .once()
+
+          resource.myOnOpen(session, null)
+
+          closedWith.map(reason => (reason.getCloseCode, reason.getReasonPhrase)) shouldBe Seq(
+            (
+              CloseReason.CloseCodes.VIOLATED_POLICY,
+              "A computing unit is reached through the gateway."
+            )
+          )
+          // Nothing is sent to it, no state is kept for it, and no service is made for the
+          // workflow it named.
+          sent shouldBe empty
+          a[NoSuchElementException] should be thrownBy SessionState.getState(session.getId)
+          WorkflowService.getAllWorkflowServices.map(_.workflowId.id) should not contain wid
+        }
+    }
+  }
+
   "myOnClose" should "drop the state registered under that session id" in {
     val (session, _) = mockSession()
     val state = registerState(session, PrivilegeEnum.WRITE)
@@ -1249,8 +1290,8 @@ class WorkflowWebsocketResourceSpec
 
   /**
     * The computing unit whose one workflow service is `service`, as the Dashboard service
-    * reaches it: the unit's hand-over routes, called in this JVM as the user the
-    * `Authorization` header names. It keeps what it is handed.
+    * reaches it: the unit's hand-over routes, called in this JVM for the user a hand-over
+    * names. It keeps what it is handed.
     */
   private class UnitOn(service: WorkflowService) extends RecordingComputingUnits {
     private val routes = new ExecutionHandoverResource(
@@ -1261,9 +1302,6 @@ class WorkflowWebsocketResourceSpec
           .map(service -> _)
     )
 
-    private def caller(authorization: String): SessionUser =
-      new SessionUser(userOf(FixtureCompilingService.userOf(authorization)))
-
     /** What the Dashboard service reads of the unit's answer. */
     private def outcomeOf(answer: Response): Handover =
       answer.getStatus match {
@@ -1272,14 +1310,14 @@ class WorkflowWebsocketResourceSpec
         case other => fail(s"the unit answered $other")
       }
 
-    override def start(cuid: Int, plan: String, authorization: String): Handover = {
-      super.start(cuid, plan, authorization)
-      outcomeOf(routes.start(StartExecutionRequest(plan, cuid), caller(authorization)))
+    override def start(cuid: Int, plan: String, uid: Int): Handover = {
+      super.start(cuid, plan, uid)
+      outcomeOf(routes.start(StartExecutionRequest(plan, cuid), CallerHeaders.of(uid)))
     }
 
-    override def update(cuid: Int, update: String, authorization: String): Handover = {
-      super.update(cuid, update, authorization)
-      outcomeOf(routes.update(ApplyUpdateRequest(update), caller(authorization)))
+    override def update(cuid: Int, update: String, uid: Int): Handover = {
+      super.update(cuid, update, uid)
+      outcomeOf(routes.update(ApplyUpdateRequest(update), CallerHeaders.of(uid)))
     }
   }
 
@@ -1366,9 +1404,8 @@ class WorkflowWebsocketResourceSpec
         awaitEngineUp(otherSent)
       }
 
-      // Handed over once, to the unit the execution was created for, as its creator.
-      unit.starts.map(handed => (handed.cuid, handed.authorization)) shouldBe
-        Seq((storedCuid, FixtureCompilingService.authorizationOf(creatorUid)))
+      // Handed over once, to the unit the execution was created for, for its creator.
+      unit.starts.map(handed => (handed.cuid, handed.uid)) shouldBe Seq((storedCuid, creatorUid))
       // The run is set up in full on the plan read, and READY: every session is told so.
       val run = service.executionService.getValue
       run.workflowContext.executionId shouldBe ExecutionIdentity(execution.eid)
@@ -1411,11 +1448,8 @@ class WorkflowWebsocketResourceSpec
 
       // The same plan again, as a hand-over that is retried would send it.
       recorder.record {
-        unit.start(
-          storedCuid,
-          execution.plan,
-          FixtureCompilingService.authorizationOf(creatorUid)
-        ) shouldBe Refused(s"Execution ${execution.eid} was already started.")
+        unit.start(storedCuid, execution.plan, creatorUid) shouldBe
+          Refused(s"Execution ${execution.eid} was already started.")
       } shouldBe empty
 
       sent shouldBe empty
@@ -1436,7 +1470,7 @@ class WorkflowWebsocketResourceSpec
       // A unit that is handed the plan in a format it does not read yet: it refuses it.
       var handedFor: Option[Long] = None
       val unit = new UnitOn(service) {
-        override def start(cuid: Int, plan: String, authorization: String): Handover = {
+        override def start(cuid: Int, plan: String, uid: Int): Handover = {
           handedFor = ExecutionStart.executionNamedBy(plan)
           super.start(
             cuid,
@@ -1444,7 +1478,7 @@ class WorkflowWebsocketResourceSpec
               s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
               s""""formatVersion": $nextFormat,"""
             ),
-            authorization
+            uid
           )
         }
       }
@@ -1566,9 +1600,8 @@ class WorkflowWebsocketResourceSpec
       )
 
       answer shouldBe OperatorUpdateResponse("limit")
-      // Handed over once, to the execution's unit, as the user who asked.
-      unit.updates.map(handed => (handed.cuid, handed.authorization)) shouldBe
-        Seq((storedCuid, FixtureCompilingService.authorizationOf(creatorUid)))
+      // Handed over once, to the execution's unit, for the user who asked.
+      unit.updates.map(handed => (handed.cuid, handed.uid)) shouldBe Seq((storedCuid, creatorUid))
       // Queued for the resume: the running Limit, with the executor the change made.
       val queued =
         run.executionStateStore.reconfigurationStore.getState.unscheduledReconfigurations
@@ -1587,13 +1620,9 @@ class WorkflowWebsocketResourceSpec
       val inAnotherEnvironment = PhysicalPlanCodec.updateToJson(
         PhysicalPlanCodec.updateFromJson(change).withPythonEnvironment("ml")
       )
-      unit.update(storedCuid, change, FixtureCompilingService.authorizationOf(otherUid)) shouldBe
+      unit.update(storedCuid, change, otherUid) shouldBe
         Refused(s"Only the user who started execution ${execution.eid} may change its operators.")
-      unit.update(
-        storedCuid,
-        inAnotherEnvironment,
-        FixtureCompilingService.authorizationOf(creatorUid)
-      ) shouldBe
+      unit.update(storedCuid, inAnotherEnvironment, creatorUid) shouldBe
         Refused("The operator's Python environment cannot change while the run is paused.")
       run.executionStateStore.reconfigurationStore.getState.unscheduledReconfigurations should
         have size 1

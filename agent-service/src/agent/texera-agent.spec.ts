@@ -1034,6 +1034,9 @@ describe("delegate mode", () => {
   /** The execution the Dashboard creates and starts for each run; the unit is then asked to wait for it, by its id. */
   const created = { eid: 21 };
 
+  /** A token that names its user, as the unit is told who asks it to wait: only the payload is read. */
+  const userToken = `header.${Buffer.from(JSON.stringify({ userId: 9, sub: "ada" })).toString("base64")}.signature`;
+
   /** The paths of the execution calls made so far: a create, then a wait, per execution. */
   const executionPaths = () => urls.filter(u => u.includes("/api/execution")).map(u => new URL(u).pathname);
 
@@ -1157,7 +1160,7 @@ describe("delegate mode", () => {
         },
       });
       const agent = makeAgentWith(model);
-      agent.setDelegateConfig({ userToken: "tok", workflowId: 7, workflowName: "w" });
+      agent.setDelegateConfig({ userToken, workflowId: 7, workflowName: "w" });
       await agent.sendMessage("modify it");
       const steps = agent.getAllSteps();
       const txt2 = (model as any).doGenerateCalls[1].prompt[1].content[0].text;
@@ -1209,7 +1212,7 @@ describe("delegate mode", () => {
         },
       });
       const agent = makeAgentWith(model);
-      agent.setDelegateConfig({ userToken: "tok", workflowId: 7, workflowName: "w" });
+      agent.setDelegateConfig({ userToken, workflowId: 7, workflowName: "w" });
       await agent.sendMessage("run it");
       const steps = agent.getAllSteps();
       expect(executionPaths()).toEqual(["/api/executions", "/api/execution/21/wait"]);
