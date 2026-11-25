@@ -36,11 +36,25 @@ export interface ExecutionControlsProps {
   executable: boolean;
 }
 
-/** The controls of a workflow's execution: the unit it is executed on, and the buttons that start and stop it. */
+/**
+ * Whether the execution shown is under way on the unit, which can be asked to pause, resume or stop it. One that
+ * its unit does not show is the Dashboard service's to tell of, and the unit may be asked to start another.
+ */
+const underWayOnUnit = ({ state, followedAtDashboard }: Execution["snapshot"]) =>
+  activeStates.has(state) && !followedAtDashboard;
+
+/** Why nothing can be executed, before anything is asked: the service would refuse it. */
+const noWarehouse = "This deployment keeps each execution's results in a warehouse: create one first.";
+
+/**
+ * The controls of a workflow's execution: the unit it is executed on, the buttons that start and stop it, and why
+ * the unit did not do what was last asked of it.
+ */
 export function ExecutionControls({ execution, content, executable }: ExecutionControlsProps) {
-  const { units, unit, chooseUnit, warehouses, warehouse, chooseWarehouse, client, snapshot } = execution;
-  const { connected, state } = snapshot;
-  const active = activeStates.has(state);
+  const { units, unit, chooseUnit, warehouses, warehouse, chooseWarehouse, warehouseMissing, client, snapshot } =
+    execution;
+  const { connected, state, followedAtDashboard, notice } = snapshot;
+  const active = underWayOnUnit(snapshot);
 
   if (!unit) {
     return (
@@ -102,7 +116,14 @@ export function ExecutionControls({ execution, content, executable }: ExecutionC
           </SelectContent>
         </Select>
       )}
-      {state === "Running" && (
+      {notice && (
+        <span
+          role="alert"
+          className="max-w-80 text-sm text-destructive">
+          {notice}
+        </span>
+      )}
+      {state === "Running" && !followedAtDashboard && (
         <Button
           variant="outline"
           onClick={() => client?.pause()}>
@@ -110,7 +131,7 @@ export function ExecutionControls({ execution, content, executable }: ExecutionC
           Pause
         </Button>
       )}
-      {state === "Paused" && (
+      {state === "Paused" && !followedAtDashboard && (
         <Button
           variant="outline"
           onClick={() => client?.resume()}>
@@ -127,9 +148,9 @@ export function ExecutionControls({ execution, content, executable }: ExecutionC
         </Button>
       ) : (
         <Button
-          disabled={!connected || !executable || content.operators.length === 0}
-          title={connected ? undefined : "Connecting to the computing unit…"}
-          onClick={() => client?.start(logicalPlan(content), content.settings, warehouse?.id)}>
+          disabled={!connected || !executable || content.operators.length === 0 || warehouseMissing}
+          title={warehouseMissing ? noWarehouse : connected ? undefined : "Connecting to the computing unit…"}
+          onClick={() => void client?.start(logicalPlan(content), content.settings, warehouse?.id)}>
           <PlayIcon />
           Execute
         </Button>
@@ -146,17 +167,21 @@ export interface ExecuteToHereItemProps {
   operatorId: string;
 }
 
-/** The item of the canvas's menu that executes the workflow up to an operator: the operator and what it needs. */
+/**
+ * The item of the canvas's menu that executes the workflow up to an operator: the operator and what it needs, which
+ * is all that is sent, so that each of them that is marked to keep its result keeps it.
+ */
 export function ExecuteToHereItem({ execution, content, problems, operatorId }: ExecuteToHereItemProps) {
-  const { client, snapshot, warehouse } = execution;
+  const { client, snapshot, warehouse, warehouseMissing } = execution;
   const plan = logicalPlan(content, operatorId);
   const executable =
     plan.operators.some(operator => operator.operatorID === operatorId) &&
     plan.operators.every(operator => !((operator.operatorID as string) in problems));
   return (
     <ContextMenuItem
-      disabled={!client || !snapshot.connected || activeStates.has(snapshot.state) || !executable}
-      onSelect={() => client?.start(plan, content.settings, warehouse?.id)}>
+      disabled={!client || !snapshot.connected || underWayOnUnit(snapshot) || !executable || warehouseMissing}
+      title={warehouseMissing ? noWarehouse : undefined}
+      onSelect={() => void client?.start(plan, content.settings, warehouse?.id)}>
       <PlayIcon />
       Execute to here
     </ContextMenuItem>

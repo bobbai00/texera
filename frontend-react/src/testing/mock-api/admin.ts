@@ -22,12 +22,13 @@
 
 import { http, HttpResponse } from "msw/http";
 import type { TestUser } from "../fixtures";
-import { errorResponse } from "./access";
+import { errorResponse, privilegeOf } from "./access";
 import { signedInUser } from "./auth";
 import type { MockDb } from "./index";
 
-/** The engine's status codes as the administration list names them (AdminExecutionResource.scala). */
+/** The status codes as the administration list names them (AdminExecutionResource.scala); any other is UNKNOWN. */
 const statusNames: Record<number, string> = {
+  6: "CREATED",
   0: "READY",
   1: "RUNNING",
   2: "PAUSED",
@@ -35,6 +36,7 @@ const statusNames: Record<number, string> = {
   4: "FAILED",
   5: "KILLED",
 };
+const statusName = (status: number) => statusNames[status] ?? "UNKNOWN";
 
 /** When the fake backend says every account was made, in seconds as the server sends it. */
 const accountCreation = Date.UTC(2026, 10, 1, 9) / 1000;
@@ -70,7 +72,9 @@ export function adminHandlers(db: MockDb) {
     }),
 
     // GET /admin/execution/executionList/{pageSize}/{pageIndex}/{sortField}/{sortDirection}?filter=…: the latest
-    // execution of each workflow, of the statuses named by each filter, the most recently ended first.
+    // execution of each workflow, of the statuses named by each filter, the most recently ended first. Its access
+    // says whether the administrator owns the workflow or was given it (WorkflowAccess.accessibleWids), which a
+    // public workflow is not.
     http.get<{ pageSize: string; pageIndex: string }>(
       "/api/admin/execution/executionList/:pageSize/:pageIndex/:sortField/:sortDirection",
       ({ request, params }) => {
@@ -79,9 +83,13 @@ export function adminHandlers(db: MockDb) {
         const only = new URL(request.url).searchParams.getAll("filter");
         const latest = new Map(db.executionRecords.map(record => [record.wid, record]));
         const size = Number(params.pageSize);
+        const accessible = (wid: number) => {
+          const workflow = db.resources.find(each => each.type === "workflow" && each.id === wid);
+          return workflow !== undefined && privilegeOf(workflow, user.uid) !== "NONE";
+        };
         return HttpResponse.json(
           [...latest.values()]
-            .filter(record => only.length === 0 || only.includes(statusNames[record.status]))
+            .filter(record => only.length === 0 || only.includes(statusName(record.status)))
             .toSorted((a, b) => (b.lastUpdateTime ?? b.startingTime) - (a.lastUpdateTime ?? a.startingTime))
             .slice(Number(params.pageIndex) * size, (Number(params.pageIndex) + 1) * size)
             .map(record => ({
@@ -90,12 +98,14 @@ export function adminHandlers(db: MockDb) {
               userName: db.users.find(each => each.uid === record.uid)?.name ?? "",
               userId: record.uid,
               executionId: record.eid,
-              executionStatus: statusNames[record.status],
+              executionStatus: statusName(record.status),
               executionTime: ((record.lastUpdateTime ?? record.startingTime) - record.startingTime) / 1000,
               executionName: record.name,
               startTime: record.startingTime,
-              endTime: record.lastUpdateTime,
-              access: true,
+              // Its end, once it has ended, and 0 while it is open.
+              endTime: [3, 4, 5].includes(record.status) ? (record.lastUpdateTime ?? 0) : 0,
+              access: accessible(record.wid),
+              reason: record.reason,
             }))
         );
       }

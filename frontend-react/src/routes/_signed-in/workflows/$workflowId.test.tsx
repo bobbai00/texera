@@ -271,6 +271,24 @@ describe("the workflow editor", () => {
     ).toBeInTheDocument();
   });
 
+  it("executes nothing on a deployment with warehouses where the user has none, as the service would refuse it", async () => {
+    db.warehouses = [];
+    const { wid } = addPenguinWorkflow();
+    await openEditor(wid);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Execute" })).toHaveAttribute(
+        "title",
+        "This deployment keeps each execution's results in a warehouse: create one first."
+      )
+    );
+    expect(screen.getByRole("button", { name: "Execute" })).toBeDisabled();
+    expect(within(await openMenu("Filter")).getByRole("menuitem", { name: "Execute to here" })).toHaveAttribute(
+      "aria-disabled",
+      "true"
+    );
+  });
+
   it("opens on the errors when an execution fails, naming the operator each is about", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
@@ -614,10 +632,14 @@ describe("the canvas's menu, the clipboard and comments", () => {
     expect(within(menu).getByRole("menuitemcheckbox", { name: "Leave out of executions" })).toBeChecked();
   });
 
-  it("executes the workflow up to an operator from the menu on it", async () => {
+  it("executes the workflow up to an operator from the menu on it, keeping each result marked to keep before it", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
     await waitFor(() => expect(screen.getByRole("button", { name: "Execute" })).toBeEnabled());
+    await user.click(
+      within(await openMenu("CSV File Scan")).getByRole("menuitemcheckbox", { name: "Keep its result" })
+    );
+    await waitFor(() => expect(savedOperator(wid, "scan")).toMatchObject({ viewResult: true }));
 
     await user.click(within(await openMenu("Filter")).getByRole("menuitem", { name: "Execute to here" }));
 
@@ -627,6 +649,13 @@ describe("the canvas's menu, the clipboard and comments", () => {
     expect(within(canvas).getByRole("group", { name: "Filter" })).toHaveTextContent("Completed · 2 rows");
     // The operator after it was not executed.
     expect(within(canvas).getByRole("group", { name: "Limit" })).toHaveTextContent("Limit");
+    await user.click(within(execution).getByRole("combobox", { name: "Result of" }));
+    expect(
+      screen
+        .getAllByRole("option")
+        .map(option => option.textContent)
+        .toSorted()
+    ).toEqual(["CSV File Scan", "Filter"]);
   });
 
   it("starts a comment where the empty canvas is right-clicked, and takes replies to it", async () => {
@@ -862,7 +891,14 @@ describe("the workflow's executions", () => {
 
   it("lists the executions, newest first, with who started each, when, and how it ended", async () => {
     const { wid } = addPenguinWorkflow();
-    addExecutionRecord(db, { wid, name: "First try", status: 4, startingTime: at(0), lastUpdateTime: at(0, 3) });
+    addExecutionRecord(db, {
+      wid,
+      name: "First try",
+      status: 4,
+      reason: "unit lost",
+      startingTime: at(0),
+      lastUpdateTime: at(0, 3),
+    });
     addExecutionRecord(db, { wid, name: "Second try", status: 3, startingTime: at(5), lastUpdateTime: at(5, 40) });
     const { user } = await openEditor(wid);
 
@@ -871,7 +907,8 @@ describe("the workflow's executions", () => {
     const items = within(executions).getAllByRole("listitem");
     expect(items.map(item => item.getAttribute("aria-label"))).toEqual(["Second try", "First try"]);
     expect(items[0]).toHaveTextContent(/Completed · by texera · Nov 18, 2026, 10:05.AM · took 40 s/);
-    expect(items[1]).toHaveTextContent("Failed");
+    // Why it ended as it did, when the service says.
+    expect(items[1]).toHaveTextContent("Failed: unit lost · by texera");
 
     await user.click(screen.getByRole("button", { name: "Failed" }));
     expect(within(screen.getByRole("list", { name: "Executions" })).getAllByRole("listitem")).toHaveLength(1);

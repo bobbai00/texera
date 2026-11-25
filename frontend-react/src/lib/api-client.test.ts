@@ -159,24 +159,48 @@ describe("api", () => {
       [
         "Dropwizard's {code, message}",
         () => HttpResponse.json({ code: 400, message: "No such dataset" }, { status: 400 }),
+        { code: 400, message: "No such dataset" },
       ],
-      ["a bare {message}", () => HttpResponse.json({ message: "No such dataset" }, { status: 400 })],
-      ["plain text", () => HttpResponse.text("No such dataset", { status: 400 })],
-    ])("reads the message from %s", async (_, response) => {
+      [
+        "a bare {message}",
+        () => HttpResponse.json({ message: "No such dataset" }, { status: 400 }),
+        { message: "No such dataset" },
+      ],
+      ["plain text", () => HttpResponse.text("No such dataset", { status: 400 }), undefined],
+    ])("reads the message from %s", async (_, response, body) => {
       answer("get", "/dataset/1", response);
 
-      await expect(api("/dataset/1")).rejects.toEqual(new ApiError(400, "No such dataset"));
+      await expect(api("/dataset/1")).rejects.toEqual(new ApiError(400, "No such dataset", body));
     });
 
     it.each([
-      ["an empty body", () => new HttpResponse(null, { status: 502 })],
-      ["an HTML page", () => HttpResponse.html("<h1>502 Bad Gateway</h1>", { status: 502 })],
-      ["JSON without a message", () => HttpResponse.json({ code: 502 }, { status: 502 })],
-      ["malformed JSON", () => new HttpResponse("{", { status: 502, headers: { "Content-Type": "application/json" } })],
-    ])("falls back to the status when the error has %s", async (_, response) => {
+      ["an empty body", () => new HttpResponse(null, { status: 502 }), undefined],
+      ["an HTML page", () => HttpResponse.html("<h1>502 Bad Gateway</h1>", { status: 502 }), undefined],
+      ["JSON without a message", () => HttpResponse.json({ code: 502 }, { status: 502 }), { code: 502 }],
+      [
+        "malformed JSON",
+        () => new HttpResponse("{", { status: 502, headers: { "Content-Type": "application/json" } }),
+        undefined,
+      ],
+    ])("falls back to the status when the error has %s", async (_, response, body) => {
       answer("get", "/dataset/1", response);
 
-      await expect(api("/dataset/1")).rejects.toEqual(new ApiError(502, "The server returned an error (502)."));
+      await expect(api("/dataset/1")).rejects.toEqual(new ApiError(502, "The server returned an error (502).", body));
+    });
+
+    it("keeps the body of an error, for a caller that reads more of it than the message", async () => {
+      const failure = {
+        code: 400,
+        message:
+          "The workflow does not compile: 1 operator has an error.\nscan: java.io.FileNotFoundException: iris.csv",
+        eid: 4,
+        operatorErrors: { scan: { message: "java.io.FileNotFoundException: iris.csv", operatorId: "scan" } },
+      };
+      answer("post", "/executions", () => HttpResponse.json(failure, { status: 400 }));
+
+      await expect(api("/executions", { method: "POST", json: {} })).rejects.toEqual(
+        new ApiError(400, failure.message, failure)
+      );
     });
 
     it("rejects a successful response whose JSON is malformed", async () => {

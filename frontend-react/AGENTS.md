@@ -91,8 +91,14 @@ for the layout and the commands.
   `file-kinds.ts`, by its extension, since the storage server types every file the same. `preview.ts` reads what is
   shown: of text, only its start, with a range request, so a file of any size is shown at once; images, videos and
   sound stream from the file's link. A kind is added there and drawn in `file-preview.tsx`.
-- **Executions** (`lib/execution/`, `features/execution/`): say "execution", "execute", never "run". The messages
-  of the engine's socket are typed in `protocol.ts` from the Scala classes; a request holds exactly those fields.
+- **Executions** (`lib/execution/`, `features/execution/`): say "execution", "execute", never "run". An execution
+  is created by the Dashboard service (`POST /api/executions`), which has the unit start it; the unit's socket
+  follows it, and a pause, a resume or a kill names it. While the unit does not show the execution it follows, the
+  client asks the service where it stands (`GET /api/executions/{eid}/state`). An execution up to an operator is
+  sent the part of the workflow it needs, never a target, so every operator in it marked to keep its result keeps
+  it. What the unit refuses is a notice beside the controls, never one of the execution's errors. The request that
+  creates one and the messages of the socket are typed in `protocol.ts` from the Scala classes; a request holds
+  exactly those fields.
 - **A page of two features** is put together in its route, which gives each what it needs of the other through
   props, as `routes/_signed-in/workflows/$workflowId.tsx` does for editing and executing.
 - **`lib/`** never imports React. Every backend call goes through `api()` in `lib/api-client.ts`.

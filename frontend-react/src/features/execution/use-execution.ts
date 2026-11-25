@@ -23,7 +23,7 @@ import { type ComputingUnit, computingUnitListQuery } from "@/components/resourc
 import { useStoredState } from "@/components/use-stored-state";
 import { ExecutionClient, type ExecutionSnapshot } from "@/lib/execution/client";
 import { can } from "@/lib/resource";
-import { type Warehouse, warehouseListQuery } from "./api";
+import { type Warehouse, warehouseListQuery, type Warehouses } from "./api";
 
 /** A workflow's execution on the computing unit that is chosen for it. */
 export interface Execution {
@@ -36,6 +36,11 @@ export interface Execution {
   warehouses: Warehouse[];
   warehouse: Warehouse | undefined;
   chooseWarehouse: (warehouseId: number) => void;
+  /**
+   * Whether the deployment keeps each execution's results in a warehouse and the user has none, so that nothing
+   * can be executed: the service would refuse it.
+   */
+  warehouseMissing: boolean;
   /** The connection to the unit, once a unit is chosen. Starting, stopping and paging results go through it. */
   client: ExecutionClient | undefined;
   snapshot: ExecutionSnapshot;
@@ -44,12 +49,15 @@ export interface Execution {
 const noSnapshot: ExecutionSnapshot = {
   connected: false,
   state: "Uninitialized",
+  followedAtDashboard: false,
   operators: {},
   results: {},
   errors: [],
   console: {},
 };
 const never = () => () => {};
+/** The warehouses until the deployment says whether it has them. */
+const noWarehouses: Warehouses = { required: false, warehouses: [] };
 
 /** Where the unit last chosen for a workflow is remembered in this browser, as the Angular app does. */
 const unitKey = (workflowId: number) => `computing-unit-of-workflow-${workflowId}`;
@@ -78,9 +86,19 @@ export function useExecution(workflowId: number): Execution {
   }, [client]);
   const snapshot = useSyncExternalStore(client?.subscribe ?? never, client?.snapshot ?? (() => noSnapshot));
 
-  const { data: warehouses = [] } = useQuery(warehouseListQuery());
+  const { data: { required, warehouses } = noWarehouses } = useQuery(warehouseListQuery());
   const [warehouseId, setWarehouseId] = useState<number>();
   const warehouse = warehouses.find(candidate => candidate.id === warehouseId) ?? warehouses.at(0);
 
-  return { units: usable, unit, chooseUnit, warehouses, warehouse, chooseWarehouse: setWarehouseId, client, snapshot };
+  return {
+    units: usable,
+    unit,
+    chooseUnit,
+    warehouses,
+    warehouse,
+    chooseWarehouse: setWarehouseId,
+    warehouseMissing: required && warehouses.length === 0,
+    client,
+    snapshot,
+  };
 }

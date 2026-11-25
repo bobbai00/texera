@@ -42,6 +42,7 @@ const filters: { label: string; statuses: AdminExecutionStatus[] }[] = [
 ];
 
 const statusNames: Record<AdminExecutionStatus, string> = {
+  CREATED: "Created",
   READY: "Initializing",
   RUNNING: "Running",
   PAUSED: "Paused",
@@ -136,12 +137,19 @@ export function AdminExecutionPage() {
                   </TableCell>
                   <TableCell className="max-w-48 truncate">{execution.name}</TableCell>
                   <TableCell>{execution.by}</TableCell>
-                  <TableCell>
+                  <TableCell className="max-w-64">
                     <Badge
                       variant="outline"
                       className={cn(statusClassNames[execution.status])}>
                       {statusNames[execution.status]}
                     </Badge>
+                    {execution.reason && (
+                      <p
+                        className="truncate text-sm text-muted-foreground"
+                        title={execution.reason}>
+                        {execution.reason}
+                      </p>
+                    )}
                   </TableCell>
                   <TableCell>{formatTime(execution.startedAt)}</TableCell>
                   <TableCell className="text-right tabular-nums">
@@ -150,13 +158,14 @@ export function AdminExecutionPage() {
                       : ""}
                   </TableCell>
                   <TableCell className="w-10">
-                    {underWay.has(execution.status) && (
+                    {/* The unit an execution is on is told only to someone who may open its workflow. */}
+                    {underWay.has(execution.status) && execution.canOpen && (
                       <Button
                         variant="ghost"
                         size="icon-sm"
                         aria-label={`Stop the execution of ${execution.workflowName}`}
                         disabled={stop.isPending}
-                        onClick={() => stop.mutate(execution.workflowId)}>
+                        onClick={() => stop.mutate(execution)}>
                         <SquareIcon />
                       </Button>
                     )}

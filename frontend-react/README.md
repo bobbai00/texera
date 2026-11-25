@@ -76,7 +76,7 @@ frontend-react/
     │   └── auth/ dataset/ environment/ model/ quota/
     ├── lib/            # shared code without React: the API client, the session, the theme, the resource model
     │   ├── workflow/   #   a workflow as it is saved, its document and room for editing together, what compiles
-    │   └── execution/  #   the engine's socket: its messages, and the client that follows an execution
+    │   └── execution/  #   starting an execution and the engine's socket: their messages, and the client
     ├── styles/         # design tokens: colors, radius, fonts
     └── testing/        # test helpers and the fake backend
 ```

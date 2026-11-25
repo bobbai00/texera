@@ -26,6 +26,7 @@ import { type ComputingUnit, type ComputingUnitAnswer, fromComputingUnitAnswer }
 import type { Settings } from "@/components/settings/api";
 import { api } from "@/lib/api-client";
 import { ExecutionClient } from "@/lib/execution/client";
+import type { ExecutionState } from "@/lib/execution/protocol";
 import type { Role } from "@/lib/session";
 
 /** A person with an account, as an administrator sees them. */
@@ -85,8 +86,12 @@ export function updateMember({ id, name, email, role, comment }: Member): Promis
   });
 }
 
-/** Where the latest execution of a workflow stands, as the administration list names it. */
-export type AdminExecutionStatus = "READY" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED" | "KILLED" | "UNKNOWN";
+/**
+ * Where the latest execution of a workflow stands, as the administration list names it: CREATED for one the
+ * Dashboard service created and no computing unit has started yet.
+ */
+export type AdminExecutionStatus =
+  "CREATED" | "READY" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED" | "KILLED" | "UNKNOWN";
 
 /** The latest execution of one workflow. */
 export interface AdminExecution {
@@ -98,6 +103,8 @@ export interface AdminExecution {
   canOpen: boolean;
   by: string;
   status: AdminExecutionStatus;
+  /** Why it is in its status, when the service says, such as "unit lost" or "killed by the user". */
+  reason?: string;
   /** In epoch milliseconds. */
   startedAt: number;
   endedAt: number | null;
@@ -112,11 +119,15 @@ interface AdminExecutionAnswer {
   userName: string;
   executionStatus: string;
   startTime: number;
-  endTime: number | null;
+  /** In epoch milliseconds, and 0 while the execution is open. */
+  endTime: number;
+  reason: string | null;
 }
 
-const statuses = new Set<string>(["READY", "RUNNING", "PAUSED", "COMPLETED", "FAILED", "KILLED"]);
+const statuses = new Set<string>(["CREATED", "READY", "RUNNING", "PAUSED", "COMPLETED", "FAILED", "KILLED"]);
 const executionPageSize = 20;
+/** The states of an execution on a unit that has ended, which a stop leaves as they are. */
+const endedStates = new Set<ExecutionState>(["Completed", "Failed", "Killed"]);
 
 /**
  * The latest execution of every workflow, the most recently ended first, of the statuses asked for (all, for
@@ -140,8 +151,9 @@ export function adminExecutionsQuery(only: AdminExecutionStatus[]) {
         canOpen: answer.access,
         by: answer.userName,
         status: statuses.has(answer.executionStatus) ? (answer.executionStatus as AdminExecutionStatus) : "UNKNOWN",
+        reason: answer.reason || undefined,
         startedAt: answer.startTime,
-        endedAt: answer.endTime,
+        endedAt: answer.endTime || null,
       }));
     },
     getNextPageParam: (last, pages) => (last.length === executionPageSize ? pages.length : undefined),
@@ -149,21 +161,43 @@ export function adminExecutionsQuery(only: AdminExecutionStatus[]) {
 }
 
 /**
- * Stops the execution of a workflow that is under way. It is stopped where it is executed: on the computing
- * unit its latest execution names, through the unit's socket, as the person who started it would.
+ * Stops an execution that is under way, as the list shows it. It is stopped where it is executed: on the computing
+ * unit that its workflow's latest execution names, through the unit's socket, as the person who started it would.
+ * The stop names the execution, so that the unit stops no other one in its place. One that is no longer its
+ * workflow's latest, because the workflow was executed again since the list was read, is not stopped: where it is
+ * executed is not known. Only an execution of a workflow the administrator may open can be stopped: the service
+ * tells no one else where its latest execution is.
+ *
+ * It is done once the unit shows the execution ended, by this stop or before it. It fails with the unit's reason
+ * when the unit does not stop it, such as for an administrator who may only read the unit, and when the unit does
+ * not answer.
  */
-export async function stopExecution(workflowId: number): Promise<void> {
-  const { cuId } = await api<{ cuId: number | null }>(`/executions/${workflowId}/latest`);
+export async function stopExecution({
+  workflowId,
+  executionId,
+}: Pick<AdminExecution, "workflowId" | "executionId">): Promise<void> {
+  const { eId, cuId } = await api<{ eId: number; cuId: number | null }>(`/executions/${workflowId}/latest`);
+  if (eId !== executionId) {
+    throw new Error("The workflow was executed again since the list was read, so nothing was stopped.");
+  }
   if (cuId === null) throw new Error("The execution names no computing unit to stop it on.");
   const client = new ExecutionClient(workflowId, cuId);
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("The computing unit did not answer.")), 10_000);
+    let asked = false;
     const stop = client.subscribe(() => {
-      if (!client.snapshot().connected) return;
-      client.kill();
+      const { connected, executionId: shown, state, notice } = client.snapshot();
+      if (!asked) {
+        if (!connected) return;
+        asked = true;
+        client.kill(executionId);
+        return;
+      }
+      if (notice === undefined && !(shown === executionId && endedStates.has(state))) return;
       clearTimeout(timer);
       stop();
-      resolve();
+      if (notice === undefined) resolve();
+      else reject(new Error(notice));
     });
     client.connect();
   }).finally(() => setTimeout(() => client.close(), 1_000));

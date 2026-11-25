@@ -18,8 +18,8 @@
  */
 
 // The calls the app makes about executions: the user's warehouses, and past executions
-// (WorkflowExecutionsResource.scala). Executing a workflow on a unit goes over the unit's socket, in
-// lib/execution/client.ts; the units themselves are resources (components/resource/api.ts).
+// (WorkflowExecutionsResource.scala). Executing a workflow on a unit, which the Dashboard service starts and the
+// unit's socket follows, is lib/execution/client.ts; the units themselves are resources (components/resource/api.ts).
 
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
@@ -30,21 +30,33 @@ export interface Warehouse {
   name: string;
 }
 
-/** The user's warehouses. A deployment without warehouses has none, and its executions name none. */
+/**
+ * The user's warehouses, and whether the deployment keeps each execution's results in one, which it then requires.
+ * A deployment without warehouses has none, and its executions name none.
+ */
+export interface Warehouses {
+  required: boolean;
+  warehouses: Warehouse[];
+}
+
 export function warehouseListQuery() {
   return queryOptions({
     queryKey: ["warehouses"],
-    queryFn: async (): Promise<Warehouse[]> => {
+    queryFn: async (): Promise<Warehouses> => {
       const { enabled, warehouses } = await api<{ enabled: boolean; warehouses: { whid: number; name: string }[] }>(
         "/warehouse/status"
       );
-      return enabled ? warehouses.map(({ whid, name }) => ({ id: whid, name })) : [];
+      return { required: enabled, warehouses: enabled ? warehouses.map(({ whid, name }) => ({ id: whid, name })) : [] };
     },
   });
 }
 
-/** How an execution ended, or where it stands, as its history keeps it. */
-export type PastExecutionStatus = "Initializing" | "Running" | "Paused" | "Completed" | "Failed" | "Killed" | "Unknown";
+/**
+ * How an execution ended, or where it stands, as its history keeps it. One that is "Created" was created by the
+ * Dashboard service and not started by any unit yet, and may never be.
+ */
+export type PastExecutionStatus =
+  "Created" | "Initializing" | "Running" | "Paused" | "Completed" | "Failed" | "Killed" | "Unknown";
 
 /** An execution of a workflow, as its history keeps it. */
 export interface PastExecution {
@@ -56,21 +68,28 @@ export interface PastExecution {
   /** Who started it. */
   by: string;
   status: PastExecutionStatus;
+  /** Why it is in its status, when the service says, such as "unit lost" or "replaced by execution 12". */
+  reason?: string;
   /** In epoch milliseconds. */
   startedAt: number;
-  /** When its status last changed: for one that ended, when it ended. */
-  updatedAt: number | null;
+  /** When it ended; while it is open, when it took the status it has, or else when it was created. */
+  updatedAt: number;
   bookmarked: boolean;
 }
 
-/** The engine's codes for where an execution stands (Utils.maptoStatusCode); any other is unknown. */
+/**
+ * The codes of where an execution stands (WorkflowExecutionStatus.scala): -1 is a state that could not be read, or
+ * that has no code of its own, such as pausing. Any other code is unknown too.
+ */
 const statuses: Record<number, PastExecutionStatus> = {
+  6: "Created",
   0: "Initializing",
   1: "Running",
   2: "Paused",
   3: "Completed",
   4: "Failed",
   5: "Killed",
+  [-1]: "Unknown",
 };
 
 /** An execution as the server lists it (WorkflowExecutionEntry), with the fields the app reads. */
@@ -80,8 +99,10 @@ interface PastExecutionAnswer {
   cuId: number | null;
   userName: string;
   status: number;
+  /** Null when there is none, and for someone who may not read what the execution recorded. */
+  reason: string | null;
   startingTime: number;
-  completionTime: number | null;
+  completionTime: number;
   bookmarked: boolean;
   name: string;
 }
@@ -101,6 +122,7 @@ export function executionHistoryQuery(workflowId: number) {
         name: answer.name,
         by: answer.userName,
         status: statuses[answer.status] ?? "Unknown",
+        reason: answer.reason || undefined,
         startedAt: answer.startingTime,
         updatedAt: answer.completionTime,
         bookmarked: answer.bookmarked,

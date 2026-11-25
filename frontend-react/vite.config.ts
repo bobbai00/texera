@@ -49,7 +49,9 @@ const routeTreeFileHeader = [
 
 // No backend service sends CORS headers, so the dev server forwards the API to them on the same origin.
 // By default it goes to a gateway that routes like bin/single-node (the e2e stack, `yarn stack:up`).
-// With TEXERA_LOCAL_DEV=1 it goes to the services of a bin/local-dev.sh stack, as frontend/proxy.config.json does.
+// With TEXERA_LOCAL_DEV=1 it goes to the services of a bin/local-dev.sh stack, with the routes of
+// frontend/proxy.config.json that this app calls. A computing unit's socket goes through local development's
+// gateway, which checks who may reach the unit, as every deployment's gateway does.
 const gateway = process.env.TEXERA_GATEWAY ?? "http://127.0.0.1:18080";
 // The shared editing service, in whose rooms workflows are edited: `yarn shared-editing` starts one here.
 const sharedEditing = { target: process.env.TEXERA_SHARED_EDITING ?? "http://127.0.0.1:1235", ws: true };
@@ -58,11 +60,18 @@ const languageServer = { target: process.env.TEXERA_LANGUAGE_SERVER ?? "http://1
 const proxy: Record<string, string | ProxyOptions> =
   process.env.TEXERA_LOCAL_DEV === "1"
     ? {
+        "/api/compile": "http://localhost:9090",
+        "/api/workflow-to-python": "http://localhost:9090",
         "/api/dataset": "http://localhost:9092",
+        "/api/model/": "http://localhost:9092",
         "/api/access/dataset": "http://localhost:9092",
+        "/api/access/model/": "http://localhost:9092",
+        "/api/access/computing-unit": "http://localhost:8888",
+        "/api/computing-unit": "http://localhost:8888",
+        "/api/cu-image": "http://localhost:8888",
         "/api/config": "http://localhost:9094",
         "/api": "http://localhost:8080",
-        "/wsapi": { target: "http://localhost:8085", ws: true },
+        "/wsapi": { target: "http://localhost:8086", ws: true },
         "/shared-editing": sharedEditing,
         "/python-language-server": languageServer,
       }

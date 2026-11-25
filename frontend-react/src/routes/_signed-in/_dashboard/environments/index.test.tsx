@@ -59,10 +59,75 @@ describe("the environments page", () => {
     await user.type(name, "my env");
     expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
     await user.clear(name);
+    await user.type(name, ".ml");
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.clear(name);
     await user.type(name, "ml");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("An environment named ml exists already.");
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent('An environment named "ml" already exists.');
+  });
+
+  it("takes a package without a version as one of any version, and a name and a version without their spaces", async () => {
+    const { user } = await openPage();
+
+    await user.click(screen.getByRole("button", { name: "New environment" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), " ml ");
+    await user.click(within(dialog).getByRole("button", { name: "Add a package" }));
+    await user.type(within(dialog).getByRole("textbox", { name: "Package" }), "pandas");
+    await user.click(within(dialog).getByRole("button", { name: "Add a package" }));
+    await user.type(within(dialog).getAllByRole("textbox", { name: "Package" })[1], "numpy");
+    await user.type(within(dialog).getAllByRole("textbox", { name: "Version" })[1], " 2.0 ");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    const list = await screen.findByRole("list", { name: "Environments" });
+    expect(within(list).getByRole("listitem")).toHaveTextContent("mlpandas, numpy==2.0");
+    expect(db.environments).toMatchObject([{ name: "ml", packages: { pandas: "", numpy: "==2.0" } }]);
+  });
+
+  it("saves again an environment that has a package of any version", async () => {
+    db.environments.push({ veid: 1, uid: admin.uid, name: "ml", packages: { pandas: "" } });
+    const { user } = await openPage();
+
+    await user.click(screen.getByRole("button", { name: /^ml/ }));
+    const dialog = screen.getByRole("dialog");
+    const name = within(dialog).getByRole("textbox", { name: "Name" });
+    await user.clear(name);
+    await user.type(name, "analysis");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(db.environments).toMatchObject([{ name: "analysis", packages: { pandas: "" } }]));
+  });
+
+  it("refuses a package listed twice, and says why the service refuses a version", async () => {
+    const { user } = await openPage();
+    await user.click(screen.getByRole("button", { name: "New environment" }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "ml");
+    for (const version of ["1.5", "1.6"]) {
+      await user.click(within(dialog).getByRole("button", { name: "Add a package" }));
+      await user.type(within(dialog).getAllByRole("textbox", { name: "Package" }).at(-1)!, "pandas");
+      await user.type(within(dialog).getAllByRole("textbox", { name: "Version" }).at(-1)!, version);
+    }
+
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent('Duplicate package "pandas".');
+    expect(db.environments).toEqual([]);
+
+    await user.click(within(dialog).getAllByRole("button", { name: "Remove pandas" })[1]);
+    const version = within(dialog).getByRole("textbox", { name: "Version" });
+    await user.clear(version);
+    await user.type(version, "1 .5");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        `Version "==1 .5" of package "pandas" is not valid: it contains whitespace.`
+      )
+    );
+    expect(db.environments).toEqual([]);
   });
 
   it("changes an environment's packages, and deletes an environment", async () => {

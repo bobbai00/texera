@@ -70,6 +70,7 @@ const filters = {
 type Filter = keyof typeof filters;
 
 const statusClassNames: Record<PastExecutionStatus, string> = {
+  Created: "bg-muted-foreground",
   Initializing: "bg-warning",
   Running: "bg-warning",
   Paused: "bg-warning",
@@ -171,7 +172,7 @@ function ExecutionItem({
   onBookmark: (bookmarked: boolean) => void;
   onDelete: () => void;
 }) {
-  const { name, status, by, startedAt, updatedAt, bookmarked, versionId } = execution;
+  const { name, status, reason, by, startedAt, updatedAt, bookmarked, versionId } = execution;
   const [renaming, setRenaming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showStatistics, setShowStatistics] = useState(false);
@@ -212,8 +213,9 @@ function ExecutionItem({
             <p className="truncate text-sm font-medium">{name}</p>
           )}
           <p className="text-xs text-muted-foreground">
-            {status} · by {by} · {formatTime(startedAt)}
-            {ended && updatedAt !== null && ` · took ${formatDuration(updatedAt - startedAt)}`}
+            {/* Why it ended as it did, when the service says, is where a past execution is looked at for it. */}
+            {reason ? `${status}: ${reason}` : status} · by {by} · {formatTime(startedAt)}
+            {ended && ` · took ${formatDuration(updatedAt - startedAt)}`}
           </p>
         </div>
         {canChange && (

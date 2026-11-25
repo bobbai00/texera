@@ -22,11 +22,14 @@ import { getSession, signOut } from "./session";
 /** A call that failed: the HTTP status (0 when no response came) and a message to show people. */
 export class ApiError extends Error {
   readonly status: number;
+  /** The body of the answer, when it was JSON, for a caller that reads more of it than the message. */
+  readonly body: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -71,7 +74,8 @@ export async function api<T>(path: string, options: ApiOptions = {}): Promise<T>
 
   if (!response.ok) {
     if (response.status === 401 && token) signOut();
-    throw new ApiError(response.status, await errorMessage(response));
+    const { message, body } = await errorOf(response);
+    throw new ApiError(response.status, message, body);
   }
   if (responseType === "void") return undefined as T;
   if (responseType === "text") return (await response.text()) as T;
@@ -87,15 +91,21 @@ function queryString(query: Record<string, string | number | boolean>): string {
   return pairs.length === 0 ? "" : `?${pairs.join("&")}`;
 }
 
-/** The services answer an error with Dropwizard's {code, message}, a bare {message}, plain text, or nothing. */
-async function errorMessage(response: Response): Promise<string> {
+/**
+ * The message of an error, and its body when that is JSON. The services answer an error with Dropwizard's
+ * {code, message}, which may say more beside them, a bare {message}, plain text, or nothing.
+ */
+async function errorOf(response: Response): Promise<{ message: string; body?: unknown }> {
   const contentType = response.headers.get("Content-Type") ?? "";
+  const unexplained = `The server returned an error (${response.status}).`;
   if (contentType.includes("json")) {
-    const error = (await response.json().catch(() => null)) as { message?: unknown } | null;
-    if (typeof error?.message === "string" && error.message) return error.message;
-  } else if (contentType.startsWith("text/plain")) {
-    const text = (await response.text()).trim();
-    if (text) return text;
+    const body = (await response.json().catch(() => undefined)) as unknown;
+    const message = (body as { message?: unknown } | null | undefined)?.message;
+    return { message: typeof message === "string" && message ? message : unexplained, body };
   }
-  return `The server returned an error (${response.status}).`;
+  if (contentType.startsWith("text/plain")) {
+    const text = (await response.text()).trim();
+    if (text) return { message: text };
+  }
+  return { message: unexplained };
 }

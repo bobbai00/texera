@@ -45,6 +45,7 @@ import {
   environmentNamePattern,
   environmentsKey,
   type PackageRequirement,
+  requirementText,
   updateEnvironment,
 } from "../api";
 
@@ -93,7 +94,7 @@ export function EnvironmentListPage() {
                   <span className="block truncate text-sm text-muted-foreground">
                     {environment.packages.length === 0
                       ? "No packages"
-                      : environment.packages.map(each => `${each.name}${each.operator}${each.version}`).join(", ")}
+                      : environment.packages.map(requirementText).join(", ")}
                   </span>
                 </button>
               </li>
@@ -128,15 +129,22 @@ function EnvironmentForm({ environment, onDone }: { environment?: Environment; o
     await queryClient.invalidateQueries({ queryKey: environmentsKey });
     onDone();
   };
+  // The service trims the name before it checks it, and so does the form.
+  const trimmedName = name.trim();
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       const kept = packages.filter(each => each.name.trim()).map(each => ({ ...each, name: each.name.trim() }));
-      return environment ? updateEnvironment({ ...environment, name, packages: kept }) : createEnvironment(name, kept);
+      // A package is listed once: of two rows with one name, the service would keep only one.
+      const repeated = kept.find((each, index) => kept.findIndex(other => other.name === each.name) !== index);
+      if (repeated) throw new Error(`Duplicate package "${repeated.name}".`);
+      return environment
+        ? updateEnvironment({ ...environment, name: trimmedName, packages: kept })
+        : createEnvironment(trimmedName, kept);
     },
     onSuccess: done,
   });
   const remove = useMutation({ mutationFn: () => deleteEnvironment(environment!.id), onSuccess: done });
-  const validName = environmentNamePattern.test(name);
+  const validName = environmentNamePattern.test(trimmedName);
   const change = (index: number, part: Partial<PackageRequirement>) =>
     setPackages(packages.map((each, at) => (at === index ? { ...each, ...part } : each)));
 
@@ -162,7 +170,9 @@ function EnvironmentForm({ environment, onDone }: { environment?: Environment; o
           aria-invalid={name !== "" && !validName}
           onChange={event => setName(event.target.value)}
         />
-        <FieldDescription>Letters, digits, dots, dashes and underscores.</FieldDescription>
+        <FieldDescription>
+          Letters, digits, dots, dashes and underscores, starting with a letter or a digit.
+        </FieldDescription>
       </Field>
       <fieldset className="space-y-2">
         <legend className="text-sm font-medium">Packages</legend>
