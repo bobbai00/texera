@@ -43,6 +43,7 @@ import { saveText } from "@/lib/download";
 import type { WorkflowContent } from "@/lib/workflow/model";
 import { logicalPlan } from "@/lib/workflow/plan";
 import { workflowToPython } from "../api";
+import type { CardDensity } from "./workflow-canvas";
 
 export interface WorkflowMenuProps {
   name: string;
@@ -54,13 +55,33 @@ export interface WorkflowMenuProps {
   /** Whether the canvas shows a small map of the whole workflow. */
   map: boolean;
   onMapChange: (map: boolean) => void;
+  /** How much each operator's card says. */
+  density: CardDensity;
+  onDensityChange: (density: CardDensity) => void;
+  /** Whether each card has its chips around it: the datasets and models it reads, and the results it kept. */
+  chips: boolean;
+  onChipsChange: (chips: boolean) => void;
 }
 
 // The code editor is loaded when someone first asks for the workflow as Python.
 const CodeView = lazy(() => import("@/components/code/code-view").then(module => ({ default: module.CodeView })));
 
-/** What else can be done with the whole workflow: its layout, a copy of it as a file, and it as Python. */
-export function WorkflowMenu({ name, content, readonly, onArrange, map, onMapChange }: WorkflowMenuProps) {
+/**
+ * What else can be done with the whole workflow: its layout, how its canvas shows it, a copy of it as a file, and it
+ * as Python.
+ */
+export function WorkflowMenu({
+  name,
+  content,
+  readonly,
+  onArrange,
+  map,
+  onMapChange,
+  density,
+  onDensityChange,
+  chips,
+  onChipsChange,
+}: WorkflowMenuProps) {
   const [pythonOpen, setPythonOpen] = useState(false);
   return (
     <>
@@ -86,6 +107,16 @@ export function WorkflowMenu({ name, content, readonly, onArrange, map, onMapCha
             checked={map}
             onCheckedChange={onMapChange}>
             Show a map of the workflow
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={density === "detailed"}
+            onCheckedChange={checked => onDensityChange(checked ? "detailed" : "compact")}>
+            Show every setting on its card
+          </DropdownMenuCheckboxItem>
+          <DropdownMenuCheckboxItem
+            checked={chips}
+            onCheckedChange={onChipsChange}>
+            Show datasets, models and results
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={() => saveText(JSON.stringify(content, null, 2), `${name}.json`)}>

@@ -37,12 +37,21 @@ test("user picks a file of a dataset for an operator to read, and executes it", 
   await dialog.getByRole("button", { name: "flowers.csv" }).click();
   await expect(dialog).toBeHidden();
   // The field shows the file by its name, under its dataset and version.
+  const path = `/dataset/${dataset.ownerEmail}/${dataset.name}/v1 - flowers/flowers.csv`;
   const file = scan.getByRole("button", { name: "File *" });
   await expect(file).toHaveText(`flowers.csv${dataset.name} · v1 - flowers`);
-  await expect(file).toHaveAttribute(
-    "title",
-    `/dataset/${dataset.ownerEmail}/${dataset.name}/v1 - flowers/flowers.csv`
+  await expect(file).toHaveAttribute("title", path);
+  // Above the card, a chip names the version the operator reads, and opens to the dataset, at that version.
+  const chip = editor.resourceChip(dataset.name, "v1 - flowers");
+  await expect(chip).toHaveAttribute("title", path);
+  await chip.click();
+  const about = editor.page.getByRole("dialog", { name: dataset.name });
+  await expect(about.getByRole("link", { name: "Open" })).toHaveAttribute(
+    "href",
+    new RegExp(`/datasets/${dataset.did}\\?version=\\d+&file=flowers\\.csv$`)
   );
+  await editor.page.keyboard.press("Escape");
+  await expect(about).toBeHidden();
 
   // The operator after it is offered the columns of the file.
   await editor.addOperator("Limit");
@@ -55,11 +64,11 @@ test("user picks a file of a dataset for an operator to read, and executes it", 
   const attribute = projection.getByRole("list", { name: "Attributes" }).getByRole("combobox", { name: "Attribute *" });
   await expect.poll(() => editor.options(attribute)).toEqual(["species", "sepal_length"]);
   await editor.choose(attribute, "species");
-  await projection.getByRole("checkbox", { name: "Keep its result for viewing" }).check();
+  await editor.keepResult("Projection");
 
   await editor.execute();
 
-  await expect(editor.operator("CSV File Scan")).toContainText("Completed · 2 rows");
+  await expect(editor.operator("CSV File Scan")).toContainText(/Completed.*2 rows/);
   await editor.select("Projection");
   await expect(editor.resultCell("setosa")).toBeVisible();
   await expect(editor.resultCell("virginica")).toBeHidden();

@@ -21,19 +21,24 @@ import { EditorView } from "@codemirror/view";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { readPiece } from "@/lib/workflow/clipboard";
 import { codeProperty } from "@/lib/workflow/code";
 import { WorkflowDocument } from "@/lib/workflow/document";
+import { holderOf } from "@/lib/workflow/holds";
+import { layout } from "@/lib/workflow/layout";
 import type { CommentBox, WorkflowContent } from "@/lib/workflow/model";
 import { WorkflowRoom } from "@/lib/workflow/room";
+import { dragOnCanvas } from "@/testing/canvas";
 import { admin, reader } from "@/testing/fixtures";
 import { db } from "@/testing/mock-api";
+import { addDataset } from "@/testing/mock-api/dataset";
 import { addComputingUnit, addExecutionRecord } from "@/testing/mock-api/execution";
 import { cutSharedEditing } from "@/testing/mock-api/shared-editing";
 import { addWorkflow } from "@/testing/mock-api/workflow";
 import { renderApp } from "@/testing/render";
 import { server } from "@/testing/server";
-import { sessionFor } from "@/testing/session";
+import { sessionFor, signInAs } from "@/testing/session";
 import { link, operator, workflowContent } from "@/testing/workflow";
 
 const penguins = {
@@ -79,7 +84,16 @@ const operatorsOnCanvas = () =>
     .map(node => node.getAttribute("aria-label"))
     .sort();
 
-/** Selects an operator on the canvas with the keyboard, as someone who cannot use a mouse does. */
+/** An operator's card on the canvas, by the name it goes by. */
+const cardOf = (name: string) => within(screen.getByLabelText("Workflow canvas")).getByRole("group", { name });
+
+/** The properties of an operator in its open card, by the name it goes by, while its card is open. */
+const propertiesOf = (name: string) => screen.queryByRole("region", { name: `Properties of ${name}` });
+
+/**
+ * Opens an operator's card on the canvas with the keyboard, as someone who cannot use a mouse does: Enter selects the
+ * operator and opens it.
+ */
 async function select(user: UserEvent, name: string) {
   within(screen.getByLabelText("Workflow canvas")).getByRole("group", { name }).focus();
   await user.keyboard("{Enter}");
@@ -120,7 +134,10 @@ async function coEditor(wid: number, name: string) {
   return { document, room };
 }
 
-/** Opens the code of the operator that is selected, and returns its panel and the editor in it. */
+/** What a co-editor is told this user is editing in a card: the first person they see is this user. */
+const toldBy = (coEditor: { room: WorkflowRoom }) => coEditor.room.state().collaborators[0]?.editing;
+
+/** Opens the code of the operator whose card is open, and returns its panel and the editor in it. */
 async function openCode(user: UserEvent, name: string) {
   await user.click(screen.getByRole("button", { name: "Edit the Python code" }));
   const panel = await screen.findByRole("region", { name: `Code of ${name}` });
@@ -134,17 +151,24 @@ function typeAtStart(editor: HTMLElement, text: string) {
 }
 
 /**
- * What pressing ⌘C or Ctrl+C on the canvas puts on the clipboard. jsdom has no clipboard, and user-event copies only
- * selected text, so the copy event is sent as the browser sends it, with a stand-in for the clipboard's data.
+ * What pressing ⌘C or Ctrl+C on the canvas puts on the clipboard, or ⌘X or Ctrl+X with `cut`. jsdom has no
+ * clipboard, and user-event copies only selected text, so the event is sent as the browser sends it, with a stand-in
+ * for the clipboard's data.
  */
-function copyFromCanvas(): string {
+function copyFromCanvas(event: "copy" | "cut" = "copy"): string {
   const data = new Map<string, string>();
   const clipboardData = {
     setData: (type: string, value: string) => data.set(type, value),
     getData: (type: string) => data.get(type) ?? "",
   };
-  fireEvent.copy(document.activeElement!, { clipboardData });
+  fireEvent[event](document.activeElement!, { clipboardData });
   return data.get("text/plain") ?? "";
+}
+
+/** Drags an operator's card to the right on the screen: a little first, which starts the drag, then by `by`. */
+function dragRight(name: string, by: number) {
+  const at = (clientX: number) => ({ clientX, clientY: 10 });
+  dragOnCanvas(cardOf(name), [at(10), at(20), at(20 + by)]);
 }
 
 /** Opens the canvas's menu on an operator, or on the empty canvas, as a right-click does. */
@@ -167,7 +191,7 @@ describe("the workflow editor", () => {
     expect(screen.getByRole("link", { name: "Workflows" })).toHaveAttribute("href", "/workflows");
   });
 
-  it("shows the properties of the operator that is selected, and saves a change to one", async () => {
+  it("opens an operator's card with its properties, and saves a change made in it", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
 
@@ -194,13 +218,15 @@ describe("the workflow editor", () => {
     expect(options.map(option => option.textContent)).toEqual(["species", "mass"]);
   });
 
-  it("renames an operator and switches it off", async () => {
+  it("renames an operator in its card, and switches it off from the menu on it", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
 
     const properties = await select(user, "Limit");
     await user.type(within(properties).getByLabelText("Name"), " to five");
-    await user.click(within(properties).getByRole("checkbox", { name: "Leave it out of executions" }));
+    await user.click(
+      within(await openMenu("Limit to five")).getByRole("menuitemcheckbox", { name: "Leave out of executions" })
+    );
 
     expect(operatorsOnCanvas()).toContain("Limit to five");
     await waitFor(
@@ -209,21 +235,46 @@ describe("the workflow editor", () => {
         timeout: 4000,
       }
     );
+    // Its card no longer offers what the menu does.
+    expect(within(properties).queryByRole("checkbox", { name: /result|executions/ })).not.toBeInTheDocument();
   });
 
-  it("adds an operator from the menu, and undoes and redoes it", async () => {
+  it("names an operator after its type once its name is cleared, and saves it with no name", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const properties = await select(user, "Filter");
+
+    await user.clear(within(properties).getByLabelText("Name"));
+
+    expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
+    expect(properties).toHaveAccessibleName("Properties of Filter");
+    expect(within(properties).getByLabelText("Name")).toHaveValue("");
+    await waitFor(() => expect(savedOperator(wid, "filter")).not.toHaveProperty("customDisplayName"), {
+      timeout: 4000,
+    });
+    expect(savedOperator(wid, "filter")?.operatorType).toBe("Filter");
+  });
+
+  it("adds an operator from the menu one column to the right of the rightmost, and undoes and redoes it", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
 
     await user.type(screen.getByRole("searchbox", { name: "Search operators" }), "dist");
     await user.click(screen.getByRole("button", { name: "Distinct" }));
     expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Distinct", "Filter", "Limit"]);
+    // The Limit stands rightmost, at 600: a card and the room for the links between two columns further on.
+    await waitFor(() => {
+      const added = savedContent(wid).operators.find(each => each.operatorType === "Distinct");
+      expect(added && savedContent(wid).operatorPositions[added.operatorID]).toEqual({ x: 920, y: 0 });
+    });
 
     await user.click(screen.getByRole("button", { name: "Undo" }));
     expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
 
     await user.click(screen.getByRole("button", { name: "Redo" }));
     expect(operatorsOnCanvas()).toContain("Distinct");
+    // Its card went with it, and comes back closed, taking the keyboard from nothing this user does.
+    expect(screen.queryByRole("region", { name: "Properties of Distinct" })).not.toBeInTheDocument();
   });
 
   it("says what is wrong with an operator that cannot be executed, and does not execute until it is put right", async () => {
@@ -246,8 +297,9 @@ describe("the workflow editor", () => {
 
     const execution = await screen.findByRole("region", { name: "Execution" });
     await within(execution).findByText("Completed");
-    const canvas = screen.getByLabelText("Workflow canvas");
-    expect(within(canvas).getByRole("group", { name: "Filter" })).toHaveTextContent("Completed · 2 rows");
+    const filter = within(screen.getByLabelText("Workflow canvas")).getByRole("group", { name: "Filter" });
+    expect(within(filter).getByText("Completed")).toBeInTheDocument();
+    expect(within(filter).getByText("3 → 2 rows")).toBeInTheDocument();
     const rows = await within(execution).findAllByRole("row");
     expect(rows.map(row => row.textContent)).toEqual(["species stringmass integer", "Adelie3750", "Gentoo5000"]);
     expect(execution).toHaveTextContent("2 rows · page 1 of 1");
@@ -283,9 +335,16 @@ describe("the workflow editor", () => {
       )
     );
     expect(screen.getByRole("button", { name: "Execute" })).toBeDisabled();
-    expect(within(await openMenu("Filter")).getByRole("menuitem", { name: "Execute to here" })).toHaveAttribute(
-      "aria-disabled",
-      "true"
+    const upTo = within(cardOf("Filter")).getByRole("button", { name: "Execute up to Filter" });
+    expect(upTo).toHaveAttribute("aria-disabled", "true");
+    expect(upTo).toHaveAccessibleDescription(
+      "This deployment keeps each execution's results in a warehouse: create one first."
+    );
+    const item = within(await openMenu("Filter")).getByRole("menuitem", { name: "Execute up to here" });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    // A menu shows no title: why is said under the item, which stays where the keyboard goes to be told it.
+    expect(item).toHaveAccessibleDescription(
+      "This deployment keeps each execution's results in a warehouse: create one first."
     );
   });
 
@@ -340,6 +399,8 @@ describe("the workflow editor", () => {
     expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
     const properties = await select(user, "Limit");
     expect(within(properties).getByLabelText("Limit *")).toBeDisabled();
+    expect(within(properties).getByLabelText("Name")).toBeDisabled();
+    expect(within(cardOf("Filter")).getByRole("button", { name: "Keep the result of Filter" })).toBeDisabled();
   });
 
   it("opens an operator's code in an editor, and saves what is typed there", async () => {
@@ -410,25 +471,40 @@ describe("the workflow editor", () => {
     expect(screen.getByRole("list", { name: "Also editing" })).toHaveTextContent("Following Grace");
 
     grace.room.select(["udf"]);
-    expect(await screen.findByRole("region", { name: "Properties of Python UDF" })).toBeVisible();
+    // This user selects what Grace selects, as Grace is told, and opens no card of theirs.
+    await waitFor(() => expect(grace.room.state().collaborators).toMatchObject([{ selection: ["udf"] }]));
     grace.room.openCode("udf");
     expect(await screen.findByRole("region", { name: "Code of Python UDF" })).toBeVisible();
     grace.room.openCode(undefined);
-    expect(await screen.findByRole("region", { name: "Properties of Python UDF" })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Code of Python UDF" })).not.toBeInTheDocument());
     grace.room.select(["scan"]);
-    expect(await screen.findByRole("region", { name: "Properties of CSV File Scan" })).toBeVisible();
+    await waitFor(() => expect(grace.room.state().collaborators).toMatchObject([{ selection: ["scan"] }]));
     expect(follow).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("region", { name: /^Properties of/ })).not.toBeInTheDocument();
 
-    // Selecting something else is going one's own way: what Grace does next changes nothing here.
+    // Opening a card of one's own is going one's own way: what Grace does next changes nothing here.
     await select(user, "Python UDF");
     expect(follow).toHaveAttribute("aria-pressed", "false");
     grace.room.select(["scan"]);
     grace.room.openCode("scan");
     await waitFor(() => expect(grace.room.state().collaborators).toMatchObject([{ selection: ["udf"] }]));
     expect(screen.getByRole("region", { name: "Properties of Python UDF" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Code of CSV File Scan" })).not.toBeInTheDocument();
   });
 
-  it("selects an operator that is added from the menu, and does not go back to it when following someone ends", async () => {
+  it("opens the card of an operator that is added from the menu, its first field ready to type in", async () => {
+    const { wid } = addCodeWorkflow();
+    const { user } = await openEditor(wid);
+
+    await user.click(screen.getByRole("button", { name: "Limit" }));
+
+    const properties = await screen.findByRole("region", { name: "Properties of Limit" });
+    await waitFor(() => expect(within(properties).getByLabelText("Limit *")).toHaveFocus());
+    await user.keyboard("7");
+    expect(within(properties).getByLabelText("Limit *")).toHaveValue(7);
+  });
+
+  it("does not go back to an operator that was added once following someone ends, nor open their card", async () => {
     const { wid } = addCodeWorkflow();
     const { user } = await openEditor(wid);
     const grace = await coEditor(wid, "Grace");
@@ -436,11 +512,13 @@ describe("the workflow editor", () => {
     await user.click(screen.getByRole("button", { name: "Limit" }));
     expect(await screen.findByRole("region", { name: "Properties of Limit" })).toBeVisible();
 
+    // Following someone leaves this user's own card: the canvas is theirs to show.
     await user.click(await screen.findByRole("button", { name: "Follow Grace" }));
+    expect(screen.queryByRole("region", { name: "Properties of Limit" })).not.toBeInTheDocument();
     grace.room.select(["scan"]);
-    expect(await screen.findByRole("region", { name: "Properties of CSV File Scan" })).toBeVisible();
+    await waitFor(() => expect(grace.room.state().collaborators).toMatchObject([{ selection: ["scan"] }]));
 
-    // Going one's own way shows what was selected for it, not the operator that was added before.
+    // Going one's own way shows what was opened for it, not the operator that was added before.
     await select(user, "Python UDF");
     expect(screen.getByRole("button", { name: "Follow Grace" })).toHaveAttribute("aria-pressed", "false");
     await waitFor(() => expect(grace.room.state().collaborators).toMatchObject([{ selection: ["udf"] }]));
@@ -543,21 +621,6 @@ describe("the editor's panels", () => {
     expect(railOrder()).toEqual(["Operators", "Versions", "Settings", "Executions"]);
   });
 
-  it("minimizes the properties to a button, which then shows the properties of what is selected", async () => {
-    const { wid } = addPenguinWorkflow();
-    const { user } = await openEditor(wid);
-    await select(user, "Limit");
-
-    await user.click(screen.getByRole("button", { name: "Minimize Properties" }));
-    expect(screen.queryByRole("region", { name: "Properties of Limit" })).not.toBeInTheDocument();
-    within(screen.getByLabelText("Workflow canvas")).getByRole("group", { name: "Filter" }).focus();
-    await user.keyboard("{Enter}");
-    expect(screen.queryByRole("region", { name: "Properties of Filter" })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Properties" }));
-    expect(await screen.findByRole("region", { name: "Properties of Filter" })).toBeVisible();
-  });
-
   it("minimizes what an execution did, and shows it again when another execution starts", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
@@ -612,43 +675,51 @@ describe("the canvas's menu, the clipboard and comments", () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
     await select(user, "Limit");
+    // Closing the card gives the keyboard back to the operator on the canvas.
+    await user.keyboard("{Escape}");
+    expect(cardOf("Limit")).toHaveFocus();
 
     await user.paste("select * from penguins");
 
     expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
   });
 
-  it("leaves an operator out of executions, and keeps its result, from the menu on it", async () => {
+  it("leaves an operator out of executions from the menu on it, and keeps the results of several at once", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
 
-    await user.click(
-      within(await openMenu("Filter")).getByRole("menuitemcheckbox", { name: "Leave out of executions" })
-    );
-    await user.click(within(await openMenu("Filter")).getByRole("menuitemcheckbox", { name: "Keep its result" }));
-
-    await waitFor(() => expect(savedOperator(wid, "filter")).toMatchObject({ isDisabled: true, viewResult: true }));
     const menu = await openMenu("Filter");
-    expect(within(menu).getByRole("menuitemcheckbox", { name: "Leave out of executions" })).toBeChecked();
+    // One operator's result is kept with the eye on its card.
+    expect(within(menu).queryByRole("menuitemcheckbox", { name: /^Keep/ })).not.toBeInTheDocument();
+    await user.click(within(menu).getByRole("menuitemcheckbox", { name: "Leave out of executions" }));
+    await waitFor(() => expect(savedOperator(wid, "filter")).toMatchObject({ isDisabled: true }));
+    expect(
+      within(await openMenu("Filter")).getByRole("menuitemcheckbox", { name: "Leave out of executions" })
+    ).toBeChecked();
+    await user.keyboard("{Escape}");
+
+    cardOf("Limit").focus();
+    await user.keyboard("{Control>}a{/Control}");
+    await user.click(within(await openMenu("Limit")).getByRole("menuitemcheckbox", { name: "Keep their results" }));
+
+    await waitFor(() => expect(savedContent(wid).operators.every(each => each.viewResult)).toBe(true));
   });
 
   it("executes the workflow up to an operator from the menu on it, keeping each result marked to keep before it", async () => {
     const { wid } = addPenguinWorkflow();
     const { user } = await openEditor(wid);
     await waitFor(() => expect(screen.getByRole("button", { name: "Execute" })).toBeEnabled());
-    await user.click(
-      within(await openMenu("CSV File Scan")).getByRole("menuitemcheckbox", { name: "Keep its result" })
-    );
+    await user.click(within(cardOf("CSV File Scan")).getByRole("button", { name: "Keep the result of CSV File Scan" }));
     await waitFor(() => expect(savedOperator(wid, "scan")).toMatchObject({ viewResult: true }));
 
-    await user.click(within(await openMenu("Filter")).getByRole("menuitem", { name: "Execute to here" }));
+    await user.click(within(await openMenu("Filter")).getByRole("menuitem", { name: "Execute up to here" }));
 
     const execution = await screen.findByRole("region", { name: "Execution" });
     await within(execution).findByText("Completed");
     const canvas = screen.getByLabelText("Workflow canvas");
-    expect(within(canvas).getByRole("group", { name: "Filter" })).toHaveTextContent("Completed · 2 rows");
+    expect(within(canvas).getByRole("group", { name: "Filter" })).toHaveTextContent(/Completed.*3 → 2 rows/);
     // The operator after it was not executed.
-    expect(within(canvas).getByRole("group", { name: "Limit" })).toHaveTextContent("Limit");
+    expect(within(canvas).getByRole("group", { name: "Limit" })).not.toHaveTextContent("Completed");
     await user.click(within(execution).getByRole("combobox", { name: "Result of" }));
     expect(
       screen
@@ -722,6 +793,449 @@ describe("the canvas's menu, the clipboard and comments", () => {
         "Is mass in grams?",
       ])
     );
+  });
+});
+
+describe("an operator's card", () => {
+  it("opens with a double click or its pencil, one at a time, and closes with Done or Escape", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+
+    // The press of a click would start a drag, which jsdom cannot do: the click itself is sent, as the browser does.
+    fireEvent.doubleClick(cardOf("Filter"));
+    expect(await screen.findByRole("region", { name: "Properties of Filter" })).toBeVisible();
+    await user.click(within(cardOf("Limit")).getByRole("button", { name: "Edit Limit" }));
+    expect(await screen.findByRole("region", { name: "Properties of Limit" })).toBeVisible();
+    expect(propertiesOf("Filter")).not.toBeInTheDocument();
+
+    await user.click(within(propertiesOf("Limit")!).getByRole("button", { name: "Done" }));
+    expect(propertiesOf("Limit")).not.toBeInTheDocument();
+    expect(cardOf("Limit")).toHaveFocus();
+    await select(user, "CSV File Scan");
+    await user.keyboard("{Escape}");
+    expect(propertiesOf("CSV File Scan")).not.toBeInTheDocument();
+    expect(cardOf("CSV File Scan")).toHaveFocus();
+  });
+
+  it("keeps the operator when Backspace or Delete is pressed in a list of choices its open card opened", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const filter = await select(user, "Filter");
+
+    // The list is drawn apart from the card, under the page's body, though it is the card's.
+    await user.click(await within(filter).findByRole("combobox", { name: "Attribute *" }));
+    await screen.findAllByRole("option");
+    await user.keyboard("{Backspace}{Delete}{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+    expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
+    expect(screen.getByRole("region", { name: "Properties of Filter" })).toBeVisible();
+  });
+
+  it("closes the card of an operator someone else removes, and does not open it when they bring it back", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    await waitFor(() => expect(grace.document.content().operators).toHaveLength(3));
+    await select(user, "Limit");
+    const search = screen.getByRole("searchbox", { name: "Search operators" });
+    await user.type(search, "so");
+
+    grace.document.remove({ operators: ["limit"] });
+    await waitFor(() => expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter"]));
+    grace.document.undo();
+    await waitFor(() => expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]));
+
+    // Its card would take the keyboard from what this user is doing now.
+    expect(screen.queryByRole("region", { name: /^Properties of/ })).not.toBeInTheDocument();
+    expect(search).toHaveFocus();
+    expect(search).toHaveValue("so");
+  });
+
+  it("keeps the operator when Backspace or Delete is typed in its open card", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const scan = await select(user, "CSV File Scan");
+
+    within(scan).getByRole("checkbox", { name: "Header *" }).focus();
+    await user.keyboard("{Backspace}{Delete}");
+    const limit = await select(user, "Limit");
+    await user.type(within(limit).getByLabelText("Limit *"), "{Backspace}{Delete}");
+
+    expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
+    // The key on the operator itself still deletes it.
+    await user.keyboard("{Escape}{Backspace}");
+    await waitFor(() => expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter"]));
+  });
+
+  it("keeps an operator's result with the eye on its card, in the workflow everyone in the room shares", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    const eye = within(cardOf("Filter")).getByRole("button", { name: "Keep the result of Filter" });
+    expect(eye).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(eye);
+
+    expect(eye).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(grace.document.content().operators.find(each => each.operatorID === "filter")?.viewResult).toBe(true)
+    );
+    await waitFor(() => expect(savedOperator(wid, "filter")).toMatchObject({ viewResult: true }));
+    await user.click(eye);
+    await waitFor(() => expect(savedOperator(wid, "filter")).toMatchObject({ viewResult: false }));
+  });
+
+  it("executes the workflow up to an operator from its card, keeping each result marked to keep before it", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    await user.click(within(cardOf("CSV File Scan")).getByRole("button", { name: "Keep the result of CSV File Scan" }));
+    const upTo = within(cardOf("Filter")).getByRole("button", { name: "Execute up to Filter" });
+    await waitFor(() => expect(upTo).toHaveAttribute("aria-disabled", "false"));
+
+    await user.click(upTo);
+
+    const execution = await screen.findByRole("region", { name: "Execution" });
+    await within(execution).findByText("Completed");
+    expect(cardOf("CSV File Scan")).toHaveTextContent(/Completed.*3 rows/);
+    expect(cardOf("Filter")).toHaveTextContent(/Completed.*3 → 2 rows/);
+    // The operator after it was not executed.
+    expect(cardOf("Limit")).not.toHaveTextContent("Completed");
+    await user.click(within(execution).getByRole("combobox", { name: "Result of" }));
+    expect(
+      screen
+        .getAllByRole("option")
+        .map(option => option.textContent)
+        .toSorted()
+    ).toEqual(["CSV File Scan", "Filter"]);
+  });
+
+  it("shows every setting on each card when the user asks, and keeps that choice for every canvas", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user, unmount } = await openEditor(wid);
+    const predicates = () => within(cardOf("Filter")).queryByRole("term");
+    expect(predicates()).not.toBeInTheDocument();
+    expect(cardOf("Filter")).toHaveTextContent("mass > 3600");
+
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Show every setting on its card" }));
+
+    expect(predicates()).toHaveTextContent("Predicates");
+    expect(within(cardOf("Filter")).getByRole("definition")).toHaveTextContent("mass > 3600");
+    unmount();
+    const { wid: other } = addPenguinWorkflow();
+    const { user: again } = await openEditor(other);
+    expect(predicates()).toHaveTextContent("Predicates");
+    await again.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Show every setting on its card" })).toBeChecked();
+  });
+
+  it("says on the card why the workflow cannot be executed up to an operator", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+
+    await user.click(screen.getByRole("button", { name: "Sort" }));
+
+    const upTo = within(cardOf("Sort")).getByRole("button", { name: "Execute up to Sort" });
+    await waitFor(() => expect(upTo).toHaveAccessibleDescription("Attributes is not set."));
+    expect(upTo).toHaveAttribute("aria-disabled", "true");
+  });
+});
+
+describe("an operator someone else is editing", () => {
+  it("is left to them: it shows who, opens here only to read, and changes nothing here, but it moves", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+
+    grace.room.edit("scan");
+
+    const scan = cardOf("CSV File Scan");
+    await waitFor(() => expect(scan).toHaveTextContent("Grace is editing"));
+    const eye = within(scan).getByRole("button", { name: "Keep the result of CSV File Scan" });
+    expect(eye).toHaveAttribute("aria-disabled", "true");
+    expect(eye).toHaveAccessibleDescription("Grace is editing");
+    await user.click(eye);
+    expect(within(scan).getByRole("button", { name: "View CSV File Scan" })).toHaveAccessibleDescription(
+      "Grace is editing"
+    );
+    // Enter selects it, and opens it to read: nothing in it changes it, and the others are told of no card.
+    scan.focus();
+    await user.keyboard("{Enter}");
+    const properties = await screen.findByRole("region", { name: "Properties of CSV File Scan" });
+    expect(within(properties).getByRole("textbox", { name: "Name" })).toBeDisabled();
+    expect(within(properties).getByRole("button", { name: "Keep the result of CSV File Scan" })).toBeDisabled();
+    expect(within(properties).getByLabelText("Offset")).toBeDisabled();
+    await waitFor(() => expect(grace.room.state().collaborators).toMatchObject([{ selection: ["scan"] }]));
+    expect(toldBy(grace)).toBeUndefined();
+    await user.click(within(properties).getByRole("button", { name: "Done" }));
+    // A double click opens it to read too.
+    fireEvent.doubleClick(scan);
+    const again = await screen.findByRole("region", { name: "Properties of CSV File Scan" });
+    expect(within(again).getByLabelText("Offset")).toBeDisabled();
+    await user.click(within(again).getByRole("button", { name: "Done" }));
+
+    // Neither its key nor the menu on it deletes it, cuts it or leaves it out.
+    scan.focus();
+    await user.keyboard("{Delete}{Backspace}");
+    const menu = await openMenu("CSV File Scan");
+    const items = [
+      within(menu).getByRole("menuitem", { name: /^Delete/ }),
+      within(menu).getByRole("menuitem", { name: /^Cut/ }),
+      within(menu).getByRole("menuitemcheckbox", { name: "Leave out of executions" }),
+    ];
+    for (const item of items) {
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription("Grace is editing");
+    }
+    // Each stays where the keyboard goes, after Copy, so that whoever comes to it is told why, and choosing it does
+    // nothing: the menu stays open.
+    await user.keyboard("{Home}{ArrowDown}{ArrowDown}{ArrowDown}");
+    expect(items[0]).toHaveFocus();
+    await user.keyboard("{Enter}");
+    await user.click(items[0]);
+    await user.click(items[2]);
+    expect(items[0]).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
+    expect(cardOf("CSV File Scan")).not.toHaveTextContent("Left out");
+
+    // Where it stands is anyone's to change. What is saved then holds all that came before it, which left it as it was.
+    dragRight("CSV File Scan", 80);
+    await waitFor(() => expect(savedContent(wid).operatorPositions.scan.x).toBeGreaterThan(0));
+    expect(savedOperator(wid, "scan")).not.toHaveProperty("viewResult", true);
+    expect(savedOperator(wid, "scan")).not.toHaveProperty("isDisabled", true);
+  });
+
+  it("opens here to change once whoever was editing it is done, or has left", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    const pencil = (name: string) => within(cardOf("CSV File Scan")).getByRole("button", { name });
+
+    grace.room.edit("scan");
+    await waitFor(() => expect(pencil("View CSV File Scan")).toHaveAccessibleDescription("Grace is editing"));
+    grace.room.edit(undefined);
+    await waitFor(() => expect(cardOf("CSV File Scan")).not.toHaveTextContent("Grace is editing"));
+    await user.click(pencil("Edit CSV File Scan"));
+    const properties = await screen.findByRole("region", { name: "Properties of CSV File Scan" });
+    expect(within(properties).getByLabelText("Offset")).toBeEnabled();
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "scan" }));
+    await user.click(within(properties).getByRole("button", { name: "Done" }));
+
+    grace.room.edit("scan");
+    await waitFor(() => expect(cardOf("CSV File Scan")).toHaveTextContent("Grace is editing"));
+    grace.room.leave();
+    await waitFor(() => expect(cardOf("CSV File Scan")).not.toHaveTextContent("Grace is editing"));
+    expect(within(await select(user, "CSV File Scan")).getByLabelText("Offset")).toBeEnabled();
+  });
+
+  it("stays with whoever opened it first when two open it at once, and closes for the other", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+
+    // This user opens the Limit, and Grace opened it a moment before, though her word of it comes after.
+    await select(user, "Limit");
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "limit" }));
+    const earlier = toldBy(grace)!.since - 1000;
+    const now = vi.spyOn(Date, "now").mockReturnValueOnce(earlier);
+    grace.room.edit("limit");
+    now.mockRestore();
+
+    await waitFor(() => expect(propertiesOf("Limit")).not.toBeInTheDocument());
+    expect(cardOf("Limit")).toHaveTextContent("Grace is editing");
+    await waitFor(() => expect(toldBy(grace)).toBeUndefined());
+    // It opens again, to read.
+    expect(within(await select(user, "Limit")).getByLabelText("Limit *")).toBeDisabled();
+
+    // This user opens the Filter before Grace does: it stays this user's.
+    const filter = await select(user, "Filter");
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "filter" }));
+    grace.room.edit("filter");
+    grace.room.select(["filter"]);
+    // Her word of it comes before what she selects.
+    expect(await within(cardOf("Filter")).findByRole("list", { name: "Selected by" })).toHaveTextContent("Grace");
+    expect(filter).toBeVisible();
+    expect(cardOf("Filter")).not.toHaveTextContent("Grace is editing");
+    expect(holderOf("filter", [grace.room.state().me!, ...grace.room.state().collaborators])).toMatchObject({
+      name: admin.name,
+    });
+  });
+
+  it("keeps the code open that was opened from a card someone else turns out to hold, to type in", async () => {
+    const { wid } = addCodeWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    await select(user, "Python UDF");
+    const { panel, editor } = await openCode(user, "Python UDF");
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "udf" }));
+
+    // Grace opened the card a moment before this user, though her word of it comes after.
+    const now = vi.spyOn(Date, "now").mockReturnValueOnce(toldBy(grace)!.since - 1000);
+    grace.room.edit("udf");
+    now.mockRestore();
+
+    await waitFor(() => expect(propertiesOf("Python UDF")).not.toBeInTheDocument());
+    expect(cardOf("Python UDF")).toHaveTextContent("Grace is editing");
+    // Code is shared text that everyone types into: no one holds it.
+    expect(panel).toBeInTheDocument();
+    typeAtStart(editor, "# mine\n");
+    await waitFor(() => expect(grace.document.code("udf")!.toJSON()).toContain("# mine"));
+  });
+
+  it("opens to read for someone who may change the workflow, telling nobody, with its code to type in", async () => {
+    const { wid } = addCodeWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    grace.room.edit("udf");
+    await waitFor(() => expect(cardOf("Python UDF")).toHaveTextContent("Grace is editing"));
+
+    const properties = await select(user, "Python UDF");
+    expect(within(properties).getByRole("textbox", { name: "Name" })).toBeDisabled();
+    expect(within(properties).getByLabelText("Worker count *")).toBeDisabled();
+    expect(within(properties).getByRole("button", { name: "Keep the result of Python UDF" })).toBeDisabled();
+    // Code is shared text that no one holds: it opens to type in.
+    const { editor } = await openCode(user, "Python UDF");
+    typeAtStart(editor, "# mine\n");
+    await waitFor(() => expect(grace.document.code("udf")!.toJSON()).toContain("# mine"));
+    expect(toldBy(grace)).toBeUndefined();
+
+    // Once she is done, the card stays as it was opened, to read, and opened again, it opens to change.
+    grace.room.edit(undefined);
+    await waitFor(() => expect(cardOf("Python UDF")).not.toHaveTextContent("Grace is editing"));
+    expect(within(properties).getByLabelText("Worker count *")).toBeDisabled();
+    expect(toldBy(grace)).toBeUndefined();
+    await user.click(within(properties).getByRole("button", { name: "Done" }));
+    expect(within(await select(user, "Python UDF")).getByLabelText("Worker count *")).toBeEnabled();
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "udf" }));
+  });
+
+  it("is, to everyone else, the one whose card this user has open, until they close it", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+
+    const limit = await select(user, "Limit");
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "limit" }));
+    await user.click(within(cardOf("Filter")).getByRole("button", { name: "Edit Filter" }));
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "filter" }));
+    await user.click(
+      within(screen.getByRole("region", { name: "Properties of Filter" })).getByRole("button", { name: "Done" })
+    );
+
+    await waitFor(() => expect(toldBy(grace)).toBeUndefined());
+    expect(limit).not.toBeInTheDocument();
+  });
+
+  it("opens to read for someone who may only view the workflow too, while they edit it, telling nobody", async () => {
+    const { wid } = addPenguinWorkflow({ grants: [{ uid: reader.uid, privilege: "READ" }] });
+    // Grace is the owner, in a browser of her own.
+    signInAs(admin);
+    const grace = await coEditor(wid, "Grace");
+    const edit = vi.spyOn(WorkflowRoom.prototype, "edit");
+    onTestFinished(() => edit.mockRestore());
+    const { user } = await openEditor(wid, sessionFor(reader));
+
+    grace.room.edit("limit");
+    await waitFor(() => expect(cardOf("Limit")).toHaveTextContent("Grace is editing"));
+    expect(within(cardOf("Limit")).getByRole("button", { name: "View Limit" })).toHaveAccessibleDescription(
+      "Grace is editing"
+    );
+    const limit = await select(user, "Limit");
+    expect(within(limit).getByLabelText("Limit *")).toBeDisabled();
+
+    // A card open only to read stays as it is, whether she is done or opens it anew.
+    grace.room.edit(undefined);
+    await waitFor(() => expect(cardOf("Limit")).not.toHaveTextContent("Grace is editing"));
+    grace.room.edit("limit");
+    await waitFor(() => expect(cardOf("Limit")).toHaveTextContent("Grace is editing"));
+    expect(limit).toBeVisible();
+    const toldByThisUser = edit.mock.calls.filter((_, call) => edit.mock.contexts[call] !== grace.room);
+    expect(toldByThisUser.length).toBeGreaterThan(0);
+    expect(toldByThisUser.every(([operatorId]) => operatorId === undefined)).toBe(true);
+  });
+
+  it("is not opened here for whoever follows the one editing it, until they open it themselves, to read", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    await user.click(await screen.findByRole("button", { name: "Follow Grace" }));
+
+    grace.room.select(["filter"]);
+    grace.room.edit("filter");
+
+    await waitFor(() => expect(cardOf("Filter")).toHaveTextContent("Grace is editing"));
+    await waitFor(() => expect(grace.room.state().collaborators).toMatchObject([{ selection: ["filter"] }]));
+    expect(screen.queryByRole("region", { name: /^Properties of/ })).not.toBeInTheDocument();
+    // Enter on it is this user's own doing: it opens to read, and following her ends.
+    cardOf("Filter").focus();
+    await user.keyboard("{Enter}");
+    const properties = await screen.findByRole("region", { name: "Properties of Filter" });
+    expect(within(properties).getByRole("textbox", { name: "Name" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Follow Grace" })).toHaveAttribute("aria-pressed", "false");
+    expect(toldBy(grace)).toBeUndefined();
+  });
+
+  it("is left out of what the menu and the keys change for several operators at once", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    grace.room.edit("filter");
+    await waitFor(() => expect(cardOf("Filter")).toHaveTextContent("Grace is editing"));
+    cardOf("Limit").focus();
+    await user.keyboard("{Control>}a{/Control}");
+    const leaveOut = async () =>
+      within(await openMenu("Limit")).getByRole("menuitemcheckbox", { name: "Leave out of executions" });
+
+    await user.click(await leaveOut());
+    await user.click(within(await openMenu("Limit")).getByRole("menuitemcheckbox", { name: "Keep their results" }));
+    await waitFor(() => expect(savedOperator(wid, "limit")).toMatchObject({ isDisabled: true, viewResult: true }));
+    expect(savedOperator(wid, "scan")).toMatchObject({ isDisabled: true, viewResult: true });
+    expect(savedOperator(wid, "filter")).not.toHaveProperty("isDisabled", true);
+    expect(savedOperator(wid, "filter")).not.toHaveProperty("viewResult", true);
+
+    // A switch says how the operators it changes are set: the Filter, which is Grace's, has no say in it.
+    const leftOut = await leaveOut();
+    expect(leftOut).toBeChecked();
+    await user.click(leftOut);
+    await waitFor(() => expect(savedOperator(wid, "limit")).toMatchObject({ isDisabled: false }));
+    expect(savedOperator(wid, "scan")).toMatchObject({ isDisabled: false });
+
+    cardOf("Limit").focus();
+    const cut = readPiece(copyFromCanvas("cut"));
+    expect(cut?.operators.map(each => each.operatorID).toSorted()).toEqual(["limit", "scan"]);
+    expect(operatorsOnCanvas()).toEqual(["Filter"]);
+  });
+
+  it("is not changed from the menu when everything selected is someone else's, which says who is editing", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    const alan = await coEditor(wid, "Alan");
+    grace.room.edit("filter");
+    alan.room.edit("limit");
+    await waitFor(() => expect(cardOf("Filter")).toHaveTextContent("Grace is editing"));
+    await waitFor(() => expect(cardOf("Limit")).toHaveTextContent("Alan is editing"));
+    cardOf("Filter").focus();
+    await user.keyboard("{Enter}{Control>}");
+    cardOf("Limit").focus();
+    await user.keyboard("{Enter}{/Control}");
+
+    const menu = await openMenu("Limit");
+
+    const items = [
+      within(menu).getByRole("menuitem", { name: /^Delete/ }),
+      within(menu).getByRole("menuitem", { name: /^Cut/ }),
+      within(menu).getByRole("menuitemcheckbox", { name: "Keep their results" }),
+      within(menu).getByRole("menuitemcheckbox", { name: "Leave out of executions" }),
+    ];
+    for (const item of items) {
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription("Grace and Alan are editing");
+    }
+    // What changes nothing that is there is anyone's to do.
+    expect(within(menu).getByRole("menuitem", { name: /^Duplicate/ })).not.toHaveAttribute("aria-disabled");
   });
 });
 
@@ -810,6 +1324,57 @@ describe("the workflow's history", () => {
     await user.click(within(bar).getByRole("button", { name: "Back to the workflow" }));
     expect(router.state.location.search).toEqual({});
     expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
+  });
+
+  it("opens the card of an operator in a version that is shown, to read, beside what the version changed", async () => {
+    const { wid } = addHistoryWorkflow();
+    const { user } = await openEditor(wid);
+    await user.click(screen.getByRole("tab", { name: "Versions" }));
+    await user.click(await screen.findByRole("button", { name: /10:00:00/ }));
+
+    const limit = await select(user, "Limit");
+
+    expect(within(limit).getByLabelText("Limit *")).toBeDisabled();
+    expect(within(limit).getByLabelText("Name")).toBeDisabled();
+    expect(within(limit).queryByRole("button", { name: "Execute up to Limit" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "What changed" })).toBeVisible();
+  });
+
+  it("tells nobody of a card opened in a version that is shown, which is only read there", async () => {
+    const { wid } = addHistoryWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    await select(user, "Limit");
+    await waitFor(() => expect(toldBy(grace)).toMatchObject({ operatorId: "limit" }));
+
+    // Showing a version closes the card, and what it told.
+    await user.click(screen.getByRole("tab", { name: "Versions" }));
+    await user.click(await screen.findByRole("button", { name: /10:00:00/ }));
+    await waitFor(() => expect(toldBy(grace)).toBeUndefined());
+    const edit = vi.spyOn(WorkflowRoom.prototype, "edit");
+    onTestFinished(() => edit.mockRestore());
+    await select(user, "Limit");
+
+    expect(edit).not.toHaveBeenCalledWith(expect.any(String));
+  });
+
+  it("shows no one editing an operator of a version that is shown, whose card opens to read", async () => {
+    const { wid } = addHistoryWorkflow();
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    grace.room.edit("limit");
+    await waitFor(() => expect(cardOf("Limit")).toHaveTextContent("Grace is editing"));
+
+    // The version is the workflow as it was, which no one is editing.
+    await user.click(screen.getByRole("tab", { name: "Versions" }));
+    await user.click(await screen.findByRole("button", { name: /10:00:00/ }));
+
+    expect(cardOf("Limit")).not.toHaveTextContent("Grace is editing");
+    expect(within(cardOf("Limit")).getByRole("button", { name: "View Limit" })).not.toHaveAccessibleDescription(
+      "Grace is editing"
+    );
+    const limit = await select(user, "Limit");
+    expect(within(limit).getByLabelText("Limit *")).toBeDisabled();
   });
 
   it("says how a property changed, and compares a version with the workflow as it is now", async () => {
@@ -991,7 +1556,7 @@ describe("the workflow's executions", () => {
       within(statistics)
         .getAllByRole("row")
         .map(row => row.textContent)
-    ).toEqual(["OperatorRows outTimeRows as they came", "Filter22 s"]);
+    ).toEqual(["OperatorRowsTimeRows as they came", "Filter3 → 2 rows2 s"]);
 
     await user.click(within(executions).getByRole("button", { name: "Open its version" }));
     expect(router.state.location.search).toEqual({ version: 1 });
@@ -1139,6 +1704,30 @@ class ProcessTupleOperator(UDFOperatorV2):
     );
   });
 
+  it("keeps the parameters in step with the code of the person this user follows, as this user types in it", async () => {
+    const { wid } = addUdfWorkflow(declared);
+    const { user } = await openEditor(wid);
+    const grace = await coEditor(wid, "Grace");
+    await user.click(await screen.findByRole("button", { name: "Follow Grace" }));
+
+    grace.room.select(["udf"]);
+    grace.room.openCode("udf");
+    const panel = await screen.findByRole("region", { name: "Code of Python UDF" });
+    const editor = await within(panel).findByRole("textbox", { name: "Code of Python UDF" });
+    const view = EditorView.findFromDOM(editor.closest<HTMLElement>(".cm-editor")!)!;
+    const at = view.state.doc.toString().indexOf(declared) + declared.length;
+    view.dispatch({
+      changes: { from: at, insert: '\n        self.name = self.UiParameter("name", AttributeType.STRING).value' },
+    });
+
+    await waitFor(() =>
+      expect(parametersOf(wid)).toEqual([
+        { attribute: { attributeName: "count", attributeType: "integer" }, value: "" },
+        { attribute: { attributeName: "name", attributeType: "string" }, value: "" },
+      ])
+    );
+  });
+
   it("declares a new parameter in the code from the properties", async () => {
     const { wid } = addUdfWorkflow("pass");
     const { user } = await openEditor(wid);
@@ -1187,5 +1776,207 @@ class ProcessTupleOperator(UDFOperatorV2):
     expect(count).toHaveValue(3);
     expect(count).toBeDisabled();
     expect(within(properties).queryByRole("button", { name: "Add a parameter" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the chips around the cards", () => {
+  /** Where the admin's dataset "penguins" keeps the file the scan reads, in its version v1. */
+  const penguinsFile = "/dataset/texera/penguins/v1/penguins.csv";
+
+  /**
+   * The admin's dataset "penguins", with the file the scan reads in its version v1, which the stand-in engine reads by
+   * its whole path; and the workflow "Heavy penguins" reading it: scan -> filter -> limit.
+   */
+  function addDatasetWorkflow() {
+    const dataset = addDataset(db, {
+      name: "penguins",
+      description: "Palmer Archipelago penguins",
+      versions: [{ name: "v1", files: { "penguins.csv": "species,mass\n" } }],
+    });
+    db.files[penguinsFile] = penguins;
+    addComputingUnit(db, { name: "Small unit" });
+    const workflow = addWorkflow(db, {
+      name: "Heavy penguins",
+      content: workflowContent(
+        [
+          operator("CSVFileScan", "scan", { fileName: penguinsFile }),
+          operator("Filter", "filter", { predicates: [{ attribute: "mass", condition: ">", value: "3600" }] }),
+          operator("Limit", "limit", { limit: 5 }),
+        ],
+        [link("scan", "filter"), link("filter", "limit")]
+      ),
+    });
+    return { dataset, workflow };
+  }
+
+  /** The chips of the versions the operators read, by what each says. */
+  const resourceChips = () =>
+    within(screen.getByLabelText("Workflow canvas"))
+      .queryAllByRole("button", { name: / v\d+$/ })
+      .map(chip => chip.textContent);
+
+  it("shows above the scan the version of the dataset it reads, and what the backend says of it", async () => {
+    const { dataset, workflow } = addDatasetWorkflow();
+    const { user } = await openEditor(workflow.wid);
+
+    await user.click(within(screen.getByLabelText("Workflow canvas")).getByRole("button", { name: "penguins v1" }));
+
+    const details = await screen.findByRole("dialog", { name: "penguins" });
+    expect(await within(details).findByText("Palmer Archipelago penguins")).toBeInTheDocument();
+    expect(within(details).getByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      `/datasets/${dataset.did}?version=${dataset.versions[0].dvid}&file=penguins.csv`
+    );
+  });
+
+  it("shows the version of a model a UDF's parameter takes, and none for a file named without its dataset", async () => {
+    addComputingUnit(db, { name: "Small unit" });
+    const { wid } = addWorkflow(db, {
+      name: "Heavy penguins",
+      content: workflowContent([
+        operator("CSVFileScan", "scan", { fileName: "penguins.csv" }),
+        operator("PythonUDFV2", "udf", {
+          uiParameters: [
+            {
+              attribute: { attributeName: "weights", attributeType: "string" },
+              value: "/model/texera/resnet/v3",
+              inputType: "model",
+            },
+          ],
+        }),
+      ]),
+    });
+
+    await openEditor(wid);
+
+    expect(resourceChips()).toEqual(["resnet v3"]);
+  });
+
+  it("never counts a chip as a part of the workflow: selecting all, copying, arranging and deleting see operators only", async () => {
+    const { workflow } = addDatasetWorkflow();
+    const { user } = await openEditor(workflow.wid);
+    expect(resourceChips()).toEqual(["penguins v1"]);
+    const before = savedContent(workflow.wid);
+
+    cardOf("Limit").focus();
+    await user.keyboard("{Control>}a{/Control}");
+    const piece = readPiece(copyFromCanvas());
+    expect(piece?.operators.map(each => each.operatorID).toSorted()).toEqual(["filter", "limit", "scan"]);
+    expect(piece?.links).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "More" }));
+    await user.click(screen.getByRole("menuitem", { name: "Arrange the operators" }));
+    await waitFor(() => expect(savedContent(workflow.wid).operatorPositions).toEqual(layout(before)));
+    expect(operatorsOnCanvas()).toEqual(["CSV File Scan", "Filter", "Limit"]);
+
+    cardOf("Limit").focus();
+    await user.keyboard("{Control>}a{/Control}{Delete}");
+
+    // Nothing is left on the canvas, which draws no chip without its card.
+    expect(within(screen.getByLabelText("Workflow canvas")).queryAllByRole("group")).toEqual([]);
+    expect(resourceChips()).toEqual([]);
+    await waitFor(() => expect(savedContent(workflow.wid)).toMatchObject({ operators: [], links: [] }));
+  });
+
+  it("shows under a card the result it kept, and that result in the panel when it is clicked", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Execute" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Execute" }));
+    const execution = await screen.findByRole("region", { name: "Execution" });
+    await within(execution).findByText("Completed");
+
+    // The limit is a sink, whose result is kept; the filter's is not, until its eye keeps it.
+    const canvas = screen.getByLabelText("Workflow canvas");
+    const limit = within(canvas).getByRole("button", { name: "Result of Limit: 2 rows" });
+    expect(within(canvas).queryByRole("button", { name: /^Result of Filter/ })).not.toBeInTheDocument();
+    await user.click(within(execution).getByRole("tab", { name: "Console" }));
+    await user.click(within(execution).getByRole("button", { name: "Minimize Execution" }));
+
+    await user.click(limit);
+
+    const shown = await screen.findByRole("region", { name: "Execution" });
+    expect(within(shown).getByRole("tab", { name: "Result" })).toHaveAttribute("aria-selected", "true");
+    expect(within(shown).getByRole("combobox", { name: "Result of" })).toHaveTextContent("Limit");
+    expect(await within(shown).findByText("2 rows · page 1 of 1")).toBeInTheDocument();
+
+    await user.click(within(cardOf("Filter")).getByRole("button", { name: "Keep the result of Filter" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Execute" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Execute" }));
+    expect(await within(canvas).findByRole("button", { name: "Result of Filter: 2 rows" })).toBeInTheDocument();
+  });
+
+  it("leaves the panel minimized when a version shown in place of the workflow is closed after a result was shown", async () => {
+    const { wid } = addPenguinWorkflow();
+    const { user } = await openEditor(wid);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Execute" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Execute" }));
+    const execution = await screen.findByRole("region", { name: "Execution" });
+    await within(execution).findByText("Completed");
+    await user.click(
+      within(screen.getByLabelText("Workflow canvas")).getByRole("button", { name: "Result of Limit: 2 rows" })
+    );
+    await user.click(within(execution).getByRole("button", { name: "Minimize Execution" }));
+
+    // The panel is not drawn while a version is shown, and is drawn anew after it: the result shown before is no new
+    // one to show.
+    await user.click(screen.getByRole("tab", { name: "Versions" }));
+    await user.click(await screen.findByRole("button", { name: /12:00:00/ }));
+    await user.click(
+      within(screen.getByRole("toolbar", { name: "Version" })).getByRole("button", { name: "Back to the workflow" })
+    );
+
+    expect(await screen.findByRole("button", { name: "Execution Completed" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Execution" })).not.toBeInTheDocument();
+  });
+
+  it("shows a version's datasets, as it read them, and no result of the execution on screen", async () => {
+    const start = Date.UTC(2026, 10, 18, 9, 0);
+    const reading = (version: string) =>
+      workflowContent(
+        [
+          operator("CSVFileScan", "scan", { fileName: `/dataset/texera/penguins/${version}/penguins.csv` }),
+          operator("Limit", "limit", { limit: 5 }),
+        ],
+        [link("scan", "limit")]
+      );
+    db.files["/dataset/texera/penguins/v2/penguins.csv"] = penguins;
+    addComputingUnit(db, { name: "Small unit" });
+    const { wid } = addWorkflow(db, {
+      name: "Heavy penguins",
+      saves: [
+        [start, reading("v1")],
+        [start + 60 * 60_000, reading("v2")],
+      ],
+    });
+    const { user } = await openEditor(wid);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Execute" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Execute" }));
+    const canvas = screen.getByLabelText("Workflow canvas");
+    await within(canvas).findByRole("button", { name: "Result of Limit: 3 rows" });
+    expect(resourceChips()).toEqual(["penguins v2"]);
+
+    await user.click(screen.getByRole("tab", { name: "Versions" }));
+    await user.click(await screen.findByRole("button", { name: /9:00:00/ }));
+
+    await waitFor(() => expect(resourceChips()).toEqual(["penguins v1"]));
+    expect(within(canvas).queryByRole("button", { name: /^Result of/ })).not.toBeInTheDocument();
+  });
+
+  it("hides every chip when the user asks, and keeps that choice for every canvas", async () => {
+    const { workflow } = addDatasetWorkflow();
+    const { user, unmount } = await openEditor(workflow.wid);
+    expect(resourceChips()).toEqual(["penguins v1"]);
+
+    await user.click(screen.getByRole("button", { name: "More" }));
+    const choice = screen.getByRole("menuitemcheckbox", { name: "Show datasets, models and results" });
+    expect(choice).toBeChecked();
+    await user.click(choice);
+
+    expect(resourceChips()).toEqual([]);
+    unmount();
+    const { user: again } = await openEditor(workflow.wid);
+    expect(resourceChips()).toEqual([]);
+    await again.click(screen.getByRole("button", { name: "More" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Show datasets, models and results" })).not.toBeChecked();
   });
 });

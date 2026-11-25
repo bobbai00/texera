@@ -17,6 +17,7 @@
  * under the License.
  */
 
+import { operatorSpacing } from "@/lib/workflow/canvas-geometry";
 import { newOperator, type OperatorMetadata, type OperatorSchema } from "@/lib/workflow/operator-schema";
 import type { Link, Operator, Point, WorkflowContent, WorkflowPiece } from "@/lib/workflow/model";
 import { emptyContent } from "@/lib/workflow/model";
@@ -55,6 +56,22 @@ export function workflowContent(operators: Operator[], links: Link[] = []): Work
       operators.map(({ operatorID }, index) => [operatorID, { x: index * 300, y: 0 }])
     ),
     links,
+  };
+}
+
+/**
+ * The same workflow with its operators where arranging would put them, each in its column and row of the canvas,
+ * counted from the top left: [0, 0], then [1, 0] to its right and [0, 1] under it.
+ */
+export function inColumns(content: WorkflowContent, places: Record<string, [number, number]>): WorkflowContent {
+  return {
+    ...content,
+    operatorPositions: Object.fromEntries(
+      Object.entries(places).map(([id, [column, row]]) => [
+        id,
+        { x: column * operatorSpacing.column, y: row * operatorSpacing.row },
+      ])
+    ),
   };
 }
 

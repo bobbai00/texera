@@ -18,7 +18,8 @@
  */
 
 import { createFileRoute } from "@tanstack/react-router";
-import { datasetQuery, fileTreeQuery, versionListQuery } from "@/features/dataset/api";
+import { versionListQuery } from "@/components/resource/api";
+import { datasetQuery, fileTreeQuery } from "@/features/dataset/api";
 import { DatasetPage } from "@/features/dataset/components/dataset-page";
 
 interface DatasetSearch {
@@ -42,7 +43,7 @@ export const Route = createFileRoute("/_signed-in/_dashboard/datasets/$datasetId
   loader: async ({ context: { queryClient }, params: { datasetId }, deps: { version } }) => {
     const [, versions] = await Promise.all([
       queryClient.ensureQueryData(datasetQuery(datasetId)),
-      queryClient.ensureQueryData(versionListQuery(datasetId)),
+      queryClient.ensureQueryData(versionListQuery({ kind: "dataset", id: datasetId })),
     ]);
     // The newest, which the list starts with, also when the address names a version this dataset does not have.
     const versionId = versions.find(({ id }) => id === version)?.id ?? versions.at(0)?.id;

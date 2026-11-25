@@ -22,6 +22,7 @@ import { ArrowLeftIcon, DatabaseIcon, FileIcon, FolderOpenIcon } from "lucide-re
 import { useId, useState } from "react";
 import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorAlert } from "@/components/feedback/error-alert";
+import { versionListQuery } from "@/components/resource/api";
 import { VersionSelect } from "@/components/resource/version-select";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,7 +36,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { Resource } from "@/lib/resource";
-import { filePath, fileTreeQuery, readableDatasetsQuery, versionListQuery } from "../api";
+import { parseResourcePath, type ResourcePath, resourcePath } from "@/lib/resource-path";
+import { filePath, fileTreeQuery, readableDatasetsQuery } from "../api";
 import { FileTree } from "./file-tree";
 
 export interface DatasetPathPickerProps {
@@ -49,12 +51,6 @@ export interface DatasetPathPickerProps {
   onChange: (path: string) => void;
 }
 
-/** What a path names: /dataset/<owner's email>/<dataset>/<version>, then the file's path in the version. */
-function parsePath(path: string): { owner?: string; dataset?: string; version?: string; file?: string } {
-  const [owner, dataset, version, ...file] = path.split("/").filter(part => part !== "" && part !== "dataset");
-  return { owner, dataset, version, file: file.length > 0 ? file.join("/") : undefined };
-}
-
 /**
  * A field that holds the path of a file in a dataset, or of a version of one. The path is the server's own name
  * for it, so it is picked from the user's datasets, not typed, and the field shows what it names: a file by its name,
@@ -63,11 +59,15 @@ function parsePath(path: string): { owner?: string; dataset?: string; version?: 
 export function DatasetPathPicker({ id, pick, value, disabled, onChange }: DatasetPathPickerProps) {
   const [open, setOpen] = useState(false);
   const what = pick === "file" ? "file" : "dataset version";
-  const chosen = parsePath(value);
+  const path = parseResourcePath(value);
+  // What the datasets open on: the one the path names, as a model's path names none.
+  const chosen = path?.kind === "dataset" ? path : undefined;
+  // A file of a dataset or of a model, which an operator reads alike, by its name under theirs and their version; a
+  // version of a dataset as a whole.
   const [name, detail] =
     pick === "file"
-      ? [chosen.file?.split("/").at(-1), [chosen.dataset, chosen.version].filter(Boolean).join(" · ")]
-      : [chosen.dataset, chosen.version];
+      ? [path?.file?.split("/").at(-1), path && `${path.name} · ${path.version}`]
+      : [chosen?.name, chosen?.version];
   const shownId = useId();
   const Icon = pick === "file" ? FileIcon : DatabaseIcon;
   return (
@@ -106,7 +106,7 @@ export function DatasetPathPicker({ id, pick, value, disabled, onChange }: Datas
         </DialogHeader>
         <DatasetBrowser
           pick={pick}
-          current={parsePath(value)}
+          current={chosen}
           onPick={path => {
             onChange(path);
             setOpen(false);
@@ -124,7 +124,8 @@ function DatasetBrowser({
   onPick,
 }: {
   pick: "file" | "version";
-  current: ReturnType<typeof parsePath>;
+  /** What is chosen now, if it is a dataset's. */
+  current: ResourcePath | undefined;
   onPick: (path: string) => void;
 }) {
   const [search, setSearch] = useState("");
@@ -139,14 +140,14 @@ function DatasetBrowser({
   const dataset =
     opened === "none"
       ? undefined
-      : (opened ?? readable.data?.find(each => each.owner === current.owner && each.name === current.dataset));
+      : (opened ?? readable.data?.find(each => each.owner === current?.owner && each.name === current?.name));
 
   if (dataset) {
     return (
       <DatasetVersions
         pick={pick}
         dataset={dataset}
-        currentVersion={current.version}
+        currentVersion={current?.version}
         onBack={() => setOpened("none")}
         onPick={onPick}
       />
@@ -206,7 +207,7 @@ function DatasetVersions({
   onBack: () => void;
   onPick: (path: string) => void;
 }) {
-  const versions = useQuery(versionListQuery(dataset.id));
+  const versions = useQuery(versionListQuery({ kind: "dataset", id: dataset.id }));
   const [versionId, setVersionId] = useState<number>();
   // The version that is chosen now is shown first; without one, the newest.
   const version =
@@ -255,7 +256,10 @@ function DatasetVersions({
         />
       )}
       {pick === "version" && version && (
-        <Button onClick={() => onPick(`/dataset/${dataset.owner}/${dataset.name}/${version.name}`)}>
+        <Button
+          onClick={() =>
+            onPick(resourcePath({ kind: "dataset", owner: dataset.owner, name: dataset.name, version: version.name }))
+          }>
           Choose this version
         </Button>
       )}

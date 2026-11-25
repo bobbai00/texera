@@ -23,12 +23,14 @@ import { useState } from "react";
 import { useSession } from "@/app/use-session";
 import { FullPageShell } from "@/components/layout/shell";
 import { DatasetFilePicker, DatasetVersionPicker } from "@/features/dataset/components/dataset-path-picker";
-import { ExecuteToHereItem, ExecutionControls } from "@/features/execution/components/execution-controls";
+import { ExecutionControls } from "@/features/execution/components/execution-controls";
 import { ExecutionHistory } from "@/features/execution/components/execution-history";
-import { ExecutionPanel } from "@/features/execution/components/execution-panel";
+import { ExecutionPanel, type ResultChoice } from "@/features/execution/components/execution-panel";
 import { useExecution } from "@/features/execution/use-execution";
+import { useExecutionUpTo } from "@/features/execution/use-execution-up-to";
 import { operatorMetadataQuery, workflowQuery } from "@/features/workflow/api";
 import { WorkflowEditor } from "@/features/workflow/components/workflow-editor";
+import { operatorName } from "@/features/workflow/operator-name";
 import { useWorkflowEditing } from "@/features/workflow/use-workflow-editing";
 
 export const Route = createFileRoute("/_signed-in/workflows/$workflowId")({
@@ -66,13 +68,18 @@ function WorkflowRoute() {
   // of the other here, so that neither knows the other.
   const editing = useWorkflowEditing(workflowId, metadata, session?.name ?? "");
   const execution = useExecution(workflowId);
+  const { content, problems, schemas } = editing;
+  const executeUpTo = useExecutionUpTo(execution, content, problems);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  // The operator whose result the execution's panel shows, as the user chose it last: in the panel, or with the chip
+  // of the result on the canvas.
+  const [chosenResult, setChosenResult] = useState<ResultChoice>();
   if (!session) return null;
-  const { content, problems } = editing;
   const operatorNames = Object.fromEntries(
-    content.operators.map(each => [each.operatorID, each.customDisplayName ?? each.operatorID])
+    content.operators.map(each => [each.operatorID, operatorName(each, schemas)])
   );
   const showVersion = (id: number | undefined) => void navigate({ search: id === undefined ? {} : { version: id } });
+  const showResult = (operatorId: string) => setChosenResult({ operatorId });
 
   return (
     <FullPageShell user={session}>
@@ -82,15 +89,10 @@ function WorkflowRoute() {
         editing={editing}
         user={{ id: session.userId, name: session.name }}
         progress={execution.snapshot.operators}
+        results={execution.snapshot.results}
+        onShowResult={showResult}
         propertyControls={propertyControls}
-        operatorItems={operator => (
-          <ExecuteToHereItem
-            execution={execution}
-            content={content}
-            problems={problems}
-            operatorId={operator.operatorID}
-          />
-        )}
+        executeUpTo={executeUpTo}
         version={version}
         onVersion={showVersion}
         executions={
@@ -117,6 +119,8 @@ function WorkflowRoute() {
             snapshot={execution.snapshot}
             operatorNames={operatorNames}
             operatorId={selectedIds.at(0)}
+            chosen={chosenResult}
+            onChoose={showResult}
           />
         }
       />

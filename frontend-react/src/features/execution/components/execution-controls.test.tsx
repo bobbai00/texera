@@ -94,10 +94,12 @@ describe("ExecutionControls", () => {
     expect(calls.start).toHaveBeenCalledOnce();
   });
 
-  it("executes nothing while the unit cannot be reached", () => {
+  it("executes nothing while the unit cannot be reached, and says so", () => {
     renderControls({ state: "Running", followedAtDashboard: true, connected: false });
 
-    expect(screen.getByRole("button", { name: "Execute" })).toBeDisabled();
+    const execute = screen.getByRole("button", { name: "Execute" });
+    expect(execute).toBeDisabled();
+    expect(execute).toHaveAttribute("title", "Connecting to the computing unit…");
   });
 
   it("executes nothing, and keeps what is shown, on a deployment that requires a warehouse the user does not have", () => {

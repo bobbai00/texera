@@ -18,23 +18,17 @@
  */
 
 import { CodeIcon } from "lucide-react";
-import { useId } from "react";
 import { ErrorAlert } from "@/components/feedback/error-alert";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { codeLanguage, codeLanguageNames, codeProperty } from "@/lib/workflow/code";
-import { type ParameterType, type UdfParameter, udfParametersProperty } from "@/lib/workflow/udf-parameters";
 import type { Attribute } from "@/lib/workflow/compilation";
-import type { OperatorPatch } from "@/lib/workflow/document";
 import type { Operator } from "@/lib/workflow/model";
 import type { OperatorSchema } from "@/lib/workflow/operator-schema";
+import { type ParameterType, type UdfParameter, udfParametersProperty } from "@/lib/workflow/udf-parameters";
 import { type PropertyControls, PropertyForm } from "./property-form";
 import { UdfParameters } from "./udf-parameters";
 
-export interface PropertyPanelProps {
+export interface OperatorPropertiesProps {
   operator: Operator;
   schema: OperatorSchema;
   /** The columns that arrive at each input port of the operator. */
@@ -44,7 +38,11 @@ export interface PropertyPanelProps {
   /** The controls that come from another feature, such as the one that picks a file of a dataset. */
   controls?: PropertyControls;
   disabled?: boolean;
-  onPatch: (patch: OperatorPatch) => void;
+  /**
+   * Whether the operator's code opens only to read; by default, as its other properties do. Code is shared text that
+   * no one holds, so a card open only to read while someone else edits it still opens its code to type in.
+   */
+  codeReadOnly?: boolean;
   /** A property was given a value, or cleared: then the value is undefined. */
   onProperty: (key: string, value: unknown) => void;
   /** The user asks for the operator's code, which is read and written in an editor of its own. Without it, the
@@ -56,73 +54,36 @@ export interface PropertyPanelProps {
   onAddParameter?: (name: string, type: ParameterType) => string | undefined;
 }
 
-/** Everything about the one operator that is selected: its name, its switches, and its properties. */
-export function PropertyPanel({
+/**
+ * The properties of an operator, as its open card holds them: why it cannot be executed, its code, the parameters
+ * its code declares, and the form of the rest.
+ */
+export function OperatorProperties({
   operator,
   schema,
   inputSchemas,
   problem,
   controls,
   disabled,
-  onPatch,
+  codeReadOnly = disabled,
   onProperty,
   onOpenCode,
   parametersProblem,
   onAddParameter,
-}: PropertyPanelProps) {
-  const nameId = useId();
-  const disabledId = useId();
-  const viewResultId = useId();
-  const { userFriendlyName, operatorDescription } = schema.additionalMetadata;
+}: OperatorPropertiesProps) {
   const language = codeLanguage(operator.operatorType);
   const declaresParameters = udfParametersProperty in (schema.jsonSchema.properties ?? {});
 
   return (
-    <section
-      aria-label={`Properties of ${operator.customDisplayName}`}
-      className="space-y-4 p-4">
-      <div className="space-y-1">
-        <h2 className="font-medium">{userFriendlyName}</h2>
-        {operatorDescription && <p className="text-sm text-muted-foreground">{operatorDescription}</p>}
-      </div>
+    <div className="space-y-4">
       <ErrorAlert error={problem} />
-      <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor={nameId}>Name</FieldLabel>
-          <Input
-            id={nameId}
-            value={operator.customDisplayName ?? ""}
-            disabled={disabled}
-            onChange={event => onPatch({ customDisplayName: event.target.value })}
-          />
-        </Field>
-        <Field orientation="horizontal">
-          <Checkbox
-            id={viewResultId}
-            checked={operator.viewResult === true}
-            disabled={disabled}
-            onCheckedChange={checked => onPatch({ viewResult: checked === true })}
-          />
-          <FieldLabel htmlFor={viewResultId}>Keep its result for viewing</FieldLabel>
-        </Field>
-        <Field orientation="horizontal">
-          <Checkbox
-            id={disabledId}
-            checked={operator.isDisabled === true}
-            disabled={disabled}
-            onCheckedChange={checked => onPatch({ isDisabled: checked === true })}
-          />
-          <FieldLabel htmlFor={disabledId}>Leave it out of executions</FieldLabel>
-        </Field>
-      </FieldGroup>
-      <Separator />
       {language && onOpenCode && (
         <Button
           variant="outline"
           className="w-full"
           onClick={onOpenCode}>
           <CodeIcon />
-          {disabled ? "View" : "Edit"} the {codeLanguageNames[language]} code
+          {codeReadOnly ? "View" : "Edit"} the {codeLanguageNames[language]} code
         </Button>
       )}
       {declaresParameters && (
@@ -145,6 +106,6 @@ export function PropertyPanel({
         disabled={disabled}
         onChange={onProperty}
       />
-    </section>
+    </div>
   );
 }

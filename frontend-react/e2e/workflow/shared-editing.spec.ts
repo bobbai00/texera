@@ -44,11 +44,16 @@ test("two people edit one workflow: each sees what the other does, and one follo
   await readerEditor.operator("Limit").hover();
   await expect(editor.canvas.getByRole("img", { name: `Pointer of ${reader.username}` })).toBeVisible();
 
-  // The admin follows the reader: what the reader selects is selected, and their code opens and closes with them.
+  // The admin follows the reader: what the reader selects is selected, and their code opens and closes with them. A
+  // card is each person's own: following closes the admin's, and opens none of the reader's.
   await editor.follow(reader.username).click();
+  await expect(readerEditor.operator("Python UDF")).not.toContainText(`${admin.username} is editing`);
   await readerEditor.select("Python UDF");
-  await expect(editor.properties("Python UDF")).toBeVisible();
-  await expect(editor.operator("Python UDF").getByRole("list", { name: "Selected by" })).toContainText(reader.username);
+  await expect(editor.operator("Python UDF")).toContainText(`${reader.username} is editing`);
+  await expect(readerEditor.operator("Python UDF").getByRole("list", { name: "Selected by" })).toContainText(
+    admin.username
+  );
+  await expect(editor.properties("Python UDF")).toBeHidden();
   await readerEditor.openCode("Python UDF");
   await expect(editor.code("Python UDF")).toBeVisible();
   await expect(editor.code("Python UDF").getByRole("list", { name: "Also in this code" })).toContainText(
@@ -64,11 +69,14 @@ test("two people edit one workflow: each sees what the other does, and one follo
   await expect(readerEditor.codeText("Python UDF")).toContainText("# from the reader");
 
   await readerEditor.closeCode("Python UDF");
-  await expect(editor.properties("Python UDF")).toBeVisible();
+  await expect(editor.code("Python UDF")).toBeHidden();
   await readerEditor.select("Text Input");
-  await expect(editor.properties("Text Input")).toBeVisible();
+  await expect(editor.operator("Text Input")).toContainText(`${reader.username} is editing`);
+  await expect(readerEditor.operator("Text Input").getByRole("list", { name: "Selected by" })).toContainText(
+    admin.username
+  );
 
-  // Selecting something oneself is going one's own way again.
+  // Opening a card oneself is going one's own way again.
   await editor.select("Limit");
   await expect(editor.follow(reader.username)).toHaveAttribute("aria-pressed", "false");
   await readerEditor.select("Python UDF");
@@ -92,6 +100,7 @@ test("someone who may only view a workflow sees it change, and has nothing to ch
   await backend.shareWorkflow(workflow, reader.email, "READ");
   await editor.open(workflow);
   await editor.addOperator("Python UDF");
+  await editor.closeCard("Python UDF");
 
   await readerEditor.open(workflow);
   await expect(readerEditor.toolbar.getByRole("status")).toHaveText("View only");

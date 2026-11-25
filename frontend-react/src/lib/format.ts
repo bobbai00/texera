@@ -19,6 +19,7 @@
 
 const sizeUnits = ["B", "KB", "MB", "GB", "TB"];
 const sizeNumber = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
+const countNumber = new Intl.NumberFormat("en-US");
 const mediumDate = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 const mediumTime = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 const timeOfDay = new Intl.DateTimeFormat("en-US", { timeStyle: "medium" });
@@ -28,6 +29,18 @@ export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "Unknown size";
   const unit = bytes < 1 ? 0 : Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), sizeUnits.length - 1);
   return `${sizeNumber.format(bytes / 1024 ** unit)} ${sizeUnits[unit]}`;
+}
+
+/**
+ * A count of rows as people read it: "150 rows", "1 row". The rows of an operator read as those it took, then those
+ * it put out, "5,265 → 3 rows", or as those it put out alone when it took none, as a source does.
+ */
+export function formatRows(rows: number | { inputRows: number; outputRows: number }): string {
+  const { inputRows, outputRows } = typeof rows === "number" ? { inputRows: 0, outputRows: rows } : rows;
+  const isCount = (count: number) => Number.isSafeInteger(count) && count >= 0;
+  if (!isCount(inputRows) || !isCount(outputRows)) return "Unknown number of rows";
+  const out = `${countNumber.format(outputRows)} ${outputRows === 1 ? "row" : "rows"}`;
+  return inputRows > 0 ? `${countNumber.format(inputRows)} → ${out}` : out;
 }
 
 /** A time in epoch milliseconds, as the server sends it, as a date in the viewer's time zone: "Nov 15, 2026". */

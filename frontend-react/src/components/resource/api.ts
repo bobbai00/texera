@@ -17,12 +17,14 @@
  * under the License.
  */
 
-// The calls that are the same for every kind of resource: listing them, and who a resource is shared with. The
-// answers are turned into the app's own shapes here, so the backend's words stop at this file: its privilege,
-// READ or WRITE, is the app's access level, "view" or "edit", and its did, mid, wid and cuid are an id.
+// The calls that are the same for every kind of resource: listing them, finding the one a path names, their
+// versions, and who a resource is shared with. The answers are turned into the app's own shapes here, so the
+// backend's words stop at this file: its privilege, READ or WRITE, is the app's access level, "view" or "edit", and
+// its did, mid, wid, cuid, dvid and mvid are an id.
 
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
+import type { ResourcePath } from "@/lib/resource-path";
 import { publicKey } from "@/lib/session";
 import {
   type AccessLevel,
@@ -30,6 +32,7 @@ import {
   type ResourceDeletion,
   type ResourceKind,
   type ResourceRef,
+  type ResourceVersion,
   toAccessLevel,
 } from "@/lib/resource";
 
@@ -57,9 +60,20 @@ export interface DatasetAnswer {
   isOwner: boolean;
 }
 
-/** A model, which the server sends like a dataset (DashboardModel). */
+/**
+ * A model, which the server sends like a dataset (DashboardModel), with what it was made with and how it is saved,
+ * null where its owner did not say.
+ */
 interface ModelAnswer extends Omit<DatasetAnswer, "dataset"> {
-  model: { mid: number; name: string; description: string | null; isPublic: boolean; creationTime: number };
+  model: {
+    mid: number;
+    name: string;
+    description: string | null;
+    isPublic: boolean;
+    creationTime: number;
+    framework: string | null;
+    format: string | null;
+  };
 }
 
 /** A workflow as the search sends it (DashboardWorkflow): owned by name, and without saying whether it is public. */
@@ -75,8 +89,19 @@ export function fromDatasetAnswer({ dataset, ...answer }: DatasetAnswer): Resour
   return fromVersionedAnswer("dataset", dataset.did, dataset, answer);
 }
 
+/** The model of a server's answer, as a resource, with what its owner said it was made with and how it is saved. */
+function fromModelAnswer({ model, ...answer }: ModelAnswer): Model {
+  const { framework, format } = model;
+  return {
+    ...fromVersionedAnswer("model", model.mid, model, answer),
+    kind: "model",
+    ...(framework && { framework }),
+    ...(format && { format }),
+  };
+}
+
 function fromVersionedAnswer(
-  kind: "dataset" | "model",
+  kind: VersionedKind,
   id: number,
   { name, description, isPublic, creationTime }: DatasetAnswer["dataset"] | ModelAnswer["model"],
   { ownerEmail, accessPrivilege, isOwner }: Omit<DatasetAnswer, "dataset">
@@ -108,17 +133,34 @@ function fromWorkflowAnswer({ workflow, ownerName, accessLevel, isOwner }: Workf
 /** The kinds the backend's search finds. Computing units are listed by their own service. */
 export type SearchableKind = Exclude<ResourceKind, "computing-unit">;
 
-/** What each kind of resource is in the app: every kind but computing units is no more than a resource. */
+/** The kinds whose resources have versions, of files, which workflows read by their paths (resource-path.ts). */
+export type VersionedKind = ResourcePath["kind"];
+
+/**
+ * A model: what every resource has, and what it was made with, such as "PyTorch", and how it is saved, where its
+ * owner said.
+ */
+export interface Model extends Resource {
+  kind: "model";
+  framework?: string;
+  format?: string;
+}
+
+/** What each kind of resource is in the app: workflows and datasets are no more than a resource. */
 interface ResourcesOfKinds {
   workflow: Resource;
   dataset: Resource;
-  model: Resource;
+  model: Model;
   "computing-unit": ComputingUnit;
 }
 
 export type ResourceOf<K extends ResourceKind> = ResourcesOfKinds[K];
 
-/** Whose resources a list holds: the user's own and those shared with them, or everyone's public ones. */
+/**
+ * Whose resources are read: the user's, in their session, where a list holds their own and those shared with them,
+ * and a lookup by a path finds everyone's public ones too; or everyone's public ones, which anyone may read, signed in
+ * or not, kept under `publicKey`.
+ */
 export type ResourceScope = "yours" | "public";
 
 /** The orders a list can be in, as the search names them. Every searchable kind has a name and a creation time. */
@@ -187,17 +229,93 @@ export function resourceListQuery<K extends ResourceKind>({
   });
 }
 
+/** What the search is asked for, besides the kind and whose resources it searches. */
+interface Search {
+  keywords: string;
+  orderBy: ResourceOrder;
+  /** The email of the one whose resources alone are found. */
+  owner?: string;
+  /** Whether everyone's public resources are found too, beside the user's own and those shared with them. */
+  includePublic?: boolean;
+}
+
 async function searchResources(
   kind: SearchableKind,
   scope: ResourceScope,
-  { keywords, orderBy }: { keywords: string; orderBy: ResourceOrder },
-  start: number
-): Promise<ListedResources> {
+  { keywords, orderBy, owner, includePublic }: Search,
+  start: number,
+  signal?: AbortSignal
+): Promise<ListedResources<ResourceOf<SearchableKind>>> {
+  const query = {
+    resourceType: kind,
+    query: keywords,
+    orderBy,
+    start,
+    count: pageSize,
+    ...(owner !== undefined && { owner }),
+    ...(includePublic && { includePublic }),
+  };
   const { results, more } = await api<{ results: SearchEntry[]; more: boolean }>(
     scope === "public" ? "/dashboard/publicSearch" : "/dashboard/search",
-    { query: { resourceType: kind, query: keywords, orderBy, start, count: pageSize } }
+    { query, signal }
   );
   return { resources: results.map(fromSearchEntry), more };
+}
+
+/**
+ * The dataset or the model that a path names, found by its owner and its name among those there are to read: those
+ * the user may read, their own, the ones shared with them and the public ones, or, for someone who is not signed in
+ * (`public`), the public ones alone. Null where it is none of them. The search is asked for every resource of the kind
+ * of the owner's, without words, a page at a time until the name is there: it finds words, not names, and the name is
+ * matched exactly, as the server reads a path (FileResolver.scala). It reads no further than a page that brings
+ * nothing, whatever the search says of more, and stops asking once whoever asked has gone, as a chip that is closed.
+ */
+export function resourceLookupQuery(
+  { kind, owner, name }: Pick<ResourcePath, "kind" | "owner" | "name">,
+  scope: ResourceScope
+) {
+  return queryOptions({
+    queryKey:
+      scope === "public"
+        ? [...publicKey, "hub", kind, "named", owner, name]
+        : [...resourceListKey(kind), "named", owner, name],
+    // A dataset, or a model, which says what it was made with and how it is saved.
+    queryFn: async ({ signal }): Promise<(Resource & Partial<Pick<Model, "framework" | "format">>) | null> => {
+      const search: Search = { keywords: "", orderBy: "NameAsc", owner, includePublic: scope === "yours" };
+      for (let start = 0; ; start += pageSize) {
+        const { resources, more } = await searchResources(kind, scope, search, start, signal);
+        const found = resources.find(resource => resource.name === name && resource.owner === owner);
+        if (found) return found;
+        if (!more || resources.length === 0) return null;
+      }
+    },
+  });
+}
+
+/**
+ * A version as the server sends it (DatasetVersion, ModelVersion), by the id of its kind's. Its name is "v1", or
+ * "v2 - " and the description it was made with.
+ */
+export type VersionAnswer = { name: string; creationTime: number } & ({ dvid: number } | { mvid: number });
+
+/** The version of a server's answer, as a version of any kind. */
+export function fromVersionAnswer(answer: VersionAnswer): ResourceVersion {
+  return { id: "dvid" in answer ? answer.dvid : answer.mvid, name: answer.name, createdAt: answer.creationTime };
+}
+
+/**
+ * The versions of a dataset or a model, newest first: of one the user may read, or of a public one, for someone who is
+ * not signed in (`public`). They nest under the resource's key, so refreshing or forgetting it covers them.
+ */
+export function versionListQuery(resource: { kind: VersionedKind; id: number }, scope: ResourceScope = "yours") {
+  const { kind, id } = resource;
+  return queryOptions({
+    queryKey: scope === "public" ? [...publicKey, "hub", kind, id, "versions"] : [...resourceKey(resource), "versions"],
+    queryFn: async () =>
+      (await api<VersionAnswer[]>(`/${kind}/${id}/${scope === "public" ? "publicVersion" : "version"}/list`))
+        .map(fromVersionAnswer)
+        .sort((a, b) => b.createdAt - a.createdAt),
+  });
 }
 
 /** How each order sorts resources, for a list that is ordered here and not by the search. */
@@ -255,10 +373,10 @@ export async function setPublic(resource: ResourceRef, makePublic: boolean): Pro
   return api(`/${kind}/${id}/update/publicity`, { method: "POST", responseType: "void" });
 }
 
-function fromSearchEntry({ workflow, dataset, model }: SearchEntry): Resource {
+function fromSearchEntry({ workflow, dataset, model }: SearchEntry): ResourceOf<SearchableKind> {
   if (workflow) return fromWorkflowAnswer(workflow);
   if (dataset) return fromDatasetAnswer(dataset);
-  if (model) return fromVersionedAnswer("model", model.model.mid, model.model, model);
+  if (model) return fromModelAnswer(model);
   throw new Error("The server sent a search result of a kind this app does not know.");
 }
 

@@ -23,7 +23,14 @@
 // at these two files.
 
 import { queryOptions } from "@tanstack/react-query";
-import { type DatasetAnswer, fromDatasetAnswer, resourceKey, resourceListKey } from "@/components/resource/api";
+import {
+  type DatasetAnswer,
+  fromDatasetAnswer,
+  fromVersionAnswer,
+  resourceKey,
+  resourceListKey,
+  type VersionAnswer,
+} from "@/components/resource/api";
 import type { Settings } from "@/components/settings/api";
 import { api } from "@/lib/api-client";
 import { downloadFile } from "@/lib/download";
@@ -48,18 +55,8 @@ export interface DatasetFolder {
   children: FileNode[];
 }
 
-/** A version as the server sends it. Its name is "v1", or "v2 - " and the description it was made with. */
-interface VersionAnswer {
-  dvid: number;
-  name: string;
-  creationTime: number;
-}
-
-function fromVersionAnswer({ dvid, name, creationTime }: VersionAnswer): ResourceVersion {
-  return { id: dvid, name, createdAt: creationTime };
-}
-
-// The keys nest under the dataset's, so refreshing or forgetting a dataset covers its versions and their files.
+// The keys nest under the dataset's, so refreshing or forgetting a dataset covers its versions and their files. Its
+// versions are listed as any kind's are (versionListQuery in components/resource/api.ts).
 function datasetKey(id: number) {
   return resourceKey({ kind: "dataset", id });
 }
@@ -81,17 +78,6 @@ export function datasetQuery(id: number) {
   return queryOptions({
     queryKey: datasetKey(id),
     queryFn: async () => fromDatasetAnswer(await api<DatasetAnswer>(`/dataset/${id}`)),
-  });
-}
-
-/** The versions of a dataset, newest first. */
-export function versionListQuery(datasetId: number) {
-  return queryOptions({
-    queryKey: [...datasetKey(datasetId), "versions"],
-    queryFn: async () =>
-      (await api<VersionAnswer[]>(`/dataset/${datasetId}/version/list`))
-        .map(fromVersionAnswer)
-        .sort((a, b) => b.createdAt - a.createdAt),
   });
 }
 

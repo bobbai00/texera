@@ -22,7 +22,10 @@ import { freshPiece, pieceOf, pieceText, readPiece } from "@/lib/workflow/clipbo
 import type { OperatorPatch, WorkflowDocument } from "@/lib/workflow/document";
 import type { Point, WorkflowContent, WorkflowPiece } from "@/lib/workflow/model";
 import type { OperatorSchema } from "@/lib/workflow/operator-schema";
+import type { Collaborator } from "@/lib/workflow/room";
 import type { Selection } from "./components/workflow-canvas";
+import { typing } from "./keys";
+import { editingNotice } from "./presence";
 
 export interface CanvasCommands {
   copy: () => void;
@@ -31,8 +34,21 @@ export interface CanvasCommands {
   paste: (at?: Point) => Promise<void>;
   duplicate: () => void;
   remove: () => void;
-  /** Changes a switch of every selected operator. */
+  /** Changes a switch of every selected operator that someone else does not hold. */
   patch: (patch: OperatorPatch) => void;
+  /** Whether copying and duplicating have something to take: an operator or a comment box is selected. */
+  canCopy: boolean;
+  /** Whether cutting has something to take: an operator that someone else does not hold, or a comment box. */
+  canCut: boolean;
+  /** Whether removing has something to remove: what cutting would take, or a link. */
+  canRemove: boolean;
+  /**
+   * What cutting, removing and the switches act on: what is selected, but for the operators someone else holds,
+   * which they leave as they are. Copying and duplicating take all of it, as they change nothing that is there.
+   */
+  changeable: Selection;
+  /** Who holds the selected operators that are left as they are, which is why: "Grace is editing". */
+  leftAlone?: string;
   /** The handlers of the canvas's keys and clipboard events: what the keyboard does to the selection. */
   handlers: {
     onCopy: (event: ClipboardEvent) => void;
@@ -49,19 +65,20 @@ interface CanvasCommandsOptions {
   /** The operator types the backend offers: an operator of another type is not pasted. */
   schemas: Map<string, OperatorSchema>;
   readonly: boolean;
+  /** The operators someone else holds, each with whoever holds it (holds.ts): theirs to change until they are done. */
+  held: ReadonlyMap<string, Collaborator>;
   /** Where the pointer is on the canvas, if it is there: what is pasted with a key goes there. */
   pointer: () => Point | undefined;
   /** What was pasted, to select and bring into view. */
   onPasted: (ids: string[]) => void;
 }
 
-/** Whether a key or a clipboard event is meant for a field being typed in, rather than for the canvas. */
-const typing = (event: { target: EventTarget }) =>
-  (event.target as HTMLElement).closest("input, textarea, select, [contenteditable]") !== null;
-
 /**
  * What can be done to what is selected on the canvas, from its menu or with the keyboard. The clipboard is the
- * system's, so a piece copied here pastes into another workflow, another tab, or the Angular app.
+ * system's, so a piece copied here pastes into another workflow, another tab, or the Angular app. What is pressed,
+ * copied or pasted in a field is the field's, and in a card open for editing the card's, which keeps it from the
+ * canvas. What changes an operator leaves those that someone else is editing as they are, and acts on the rest; where
+ * they stand and their links stay anyone's to change.
  */
 export function useCanvasCommands({
   document,
@@ -69,11 +86,16 @@ export function useCanvasCommands({
   selection,
   schemas,
   readonly,
+  held,
   pointer,
   onPasted,
 }: CanvasCommandsOptions): CanvasCommands {
-  const copied = () => pieceOf(content, selection);
-  const nothingSelected = selection.operators.length + selection.commentBoxes.length === 0;
+  const copied = (elements: Selection = selection) => pieceOf(content, elements);
+  const canCopy = selection.operators.length + selection.commentBoxes.length > 0;
+  const changeable = { ...selection, operators: selection.operators.filter(id => !held.has(id)) };
+  const canCut = changeable.operators.length + changeable.commentBoxes.length > 0;
+  const canRemove = canCut || changeable.links.length > 0;
+  const [holder, ...holders] = selection.operators.flatMap(id => held.get(id) ?? []);
 
   function put(piece: WorkflowPiece, at?: Point) {
     const known = { ...piece, operators: piece.operators.filter(operator => schemas.has(operator.operatorType)) };
@@ -85,12 +107,12 @@ export function useCanvasCommands({
     ]);
   }
 
-  const remove = () => document.remove(selection);
+  const remove = () => document.remove(changeable);
 
   return {
     copy: () => void navigator.clipboard.writeText(pieceText(copied())),
     cut: () => {
-      void navigator.clipboard.writeText(pieceText(copied()));
+      void navigator.clipboard.writeText(pieceText(copied(changeable)));
       remove();
     },
     paste: async at => {
@@ -100,29 +122,34 @@ export function useCanvasCommands({
     duplicate: () => put(copied()),
     remove,
     patch: patch => {
-      for (const id of selection.operators) document.patchOperator(id, patch);
+      for (const id of changeable.operators) document.patchOperator(id, patch);
     },
+    canCopy,
+    canCut,
+    canRemove,
+    changeable,
+    leftAlone: holder && editingNotice([holder, ...holders]),
     handlers: {
       onCopy: event => {
-        if (typing(event) || nothingSelected) return;
+        if (typing(event.target) || !canCopy) return;
         event.preventDefault();
         event.clipboardData.setData("text/plain", pieceText(copied()));
       },
       onCut: event => {
-        if (typing(event) || nothingSelected || readonly) return;
+        if (typing(event.target) || !canCut || readonly) return;
         event.preventDefault();
-        event.clipboardData.setData("text/plain", pieceText(copied()));
+        event.clipboardData.setData("text/plain", pieceText(copied(changeable)));
         remove();
       },
       onPaste: event => {
-        if (typing(event) || readonly) return;
+        if (typing(event.target) || readonly) return;
         const piece = readPiece(event.clipboardData.getData("text/plain"));
         if (!piece) return;
         event.preventDefault();
         put(piece, pointer());
       },
       onKeyDown: event => {
-        if (typing(event) || readonly || nothingSelected) return;
+        if (typing(event.target) || readonly || !canCopy) return;
         if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d") {
           // Not the browser's bookmark.
           event.preventDefault();

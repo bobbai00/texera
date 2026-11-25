@@ -43,8 +43,10 @@ test("user makes a workflow public, finds it in the hub, looks inside it, and co
   await page.goto("hub");
   await page.getByRole("list", { name: "Public workflows" }).getByRole("link", { name: workflow.name }).click();
   await expect(page.getByRole("heading", { level: 1, name: workflow.name })).toBeVisible();
-  await editor.operator("Text Input").click();
-  await expect(editor.properties("Text Input").getByLabel("Text *")).toHaveValue("ada");
+  // An operator's card opens to read.
+  const text = (await editor.select("Text Input")).getByLabel("Text *");
+  await expect(text).toHaveValue("ada");
+  await expect(text).toBeDisabled();
 
   await page.getByRole("button", { name: "Make a copy" }).click();
   await expect(page).toHaveURL(/\/workflows\/\d+$/);

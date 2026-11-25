@@ -18,32 +18,38 @@
  */
 
 import dagre from "@dagrejs/dagre";
+// The size of a card and the room around it are the canvas's, which draws cards without dagre: only arranging needs it.
+import { operatorCard, operatorSpacing } from "./canvas-geometry";
 import type { Point, WorkflowContent } from "./model";
 
 /**
- * An operator on the canvas is a tile, which its position places by its top left corner, with its name under it,
- * as the Angular app draws it: workflows laid out there fit here. In pixels.
+ * Positions that lay the workflow out from left to right, from the top left corner of the canvas: each operator in a
+ * column after every one it depends on, with the links as short as they can be all together, so that an operator
+ * mostly stands in the column after the furthest one it depends on, and its card as far from the next as
+ * `operatorSpacing` says. A workflow laid out for the Angular app's tiles, which stand closer together, may need
+ * "Arrange the operators" for its cards to have their room.
  */
-export const operatorTile = { width: 60, height: 60 };
-/** The room the name under a tile takes, which arranging leaves free around it. */
-export const operatorLabel = { width: 160, height: 44 };
-
-/** All the room an operator takes: its tile, and its name under it. */
-const footprint = { width: operatorLabel.width, height: operatorTile.height + operatorLabel.height };
-
-/** Positions that lay the workflow out from left to right, each operator after the ones it depends on. */
 export function layout(content: WorkflowContent): Record<string, Point> {
   const graph = new dagre.graphlib.Graph();
-  graph.setGraph({ rankdir: "LR", nodesep: 40, ranksep: 96 });
+  graph.setGraph({
+    rankdir: "LR",
+    ranksep: operatorSpacing.column - operatorCard.width,
+    nodesep: operatorSpacing.row - operatorCard.height,
+  });
   graph.setDefaultEdgeLabel(() => ({}));
-  for (const { operatorID } of content.operators) graph.setNode(operatorID, { ...footprint });
-  for (const { source, target } of content.links) graph.setEdge(source.operatorID, target.operatorID);
+  for (const { operatorID } of content.operators) graph.setNode(operatorID, { ...operatorCard });
+  // Only a link between two of the workflow's operators counts. One may name an operator that is gone, made while
+  // someone else deleted it, and dagre would stand an empty card for it in a column of its own.
+  for (const { source, target } of content.links) {
+    const [from, to] = [source.operatorID, target.operatorID];
+    if (from !== to && graph.hasNode(from) && graph.hasNode(to)) graph.setEdge(from, to);
+  }
   dagre.layout(graph);
   return Object.fromEntries(
     content.operators.map(({ operatorID }) => {
-      // dagre places the center of all the room; the canvas places the top left corner of the tile in it.
+      // dagre places the center of each card; the canvas places its top left corner.
       const { x, y } = graph.node(operatorID) as Point;
-      return [operatorID, { x: Math.round(x - operatorTile.width / 2), y: Math.round(y - footprint.height / 2) }];
+      return [operatorID, { x: Math.round(x - operatorCard.width / 2), y: Math.round(y - operatorCard.height / 2) }];
     })
   );
 }

@@ -55,8 +55,9 @@ export function hubHandlers(db: MockDb) {
     });
 
   return [
-    // GET /dashboard/publicSearch?resourceType=&query=&orderBy=&start=&count= -> everyone's public resources of the
-    // type, searched as the user's own are.
+    // GET /dashboard/publicSearch?resourceType=&query=&orderBy=&start=&count=&owner=… -> everyone's public resources
+    // of the type, searched as the user's own are. It searches as no one, whoever asks: the public ones alone, whatever
+    // includePublic says.
     http.get("/api/dashboard/publicSearch", ({ request }) => {
       const query = new URL(request.url).searchParams;
       const type = query.get("resourceType") ?? "workflow";

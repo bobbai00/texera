@@ -186,7 +186,10 @@ export function sameValue(a: unknown, b: unknown): boolean {
   return [...new Set([...Object.keys(left), ...Object.keys(right)])].every(key => sameValue(left[key], right[key]));
 }
 
-/** The name an operator shows on the canvas. */
+/**
+ * The name an operator goes by in the summary of what a version changed, which knows no operator type: the one it
+ * was given, or else its type's id. The canvas and the list of changes name it by its type's name where it has none.
+ */
 export function nameOf(operator: Operator): string {
   return operator.customDisplayName || operator.operatorType;
 }

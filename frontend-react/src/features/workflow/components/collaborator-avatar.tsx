@@ -17,7 +17,6 @@
  * under the License.
  */
 
-import { cn } from "cn";
 import { UserAvatar } from "@/components/user-avatar";
 import type { Collaborator } from "@/lib/workflow/room";
 import { presenceClassNames } from "../presence";
@@ -30,7 +29,7 @@ export function CollaboratorAvatar({ collaborator }: { collaborator: Collaborato
       className="flex">
       <UserAvatar
         name={collaborator.name}
-        className={cn("text-white", presenceClassNames(collaborator).background)}
+        className={presenceClassNames(collaborator).label}
       />
       <span className="sr-only">{collaborator.name}</span>
     </span>

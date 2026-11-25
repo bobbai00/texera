@@ -18,57 +18,66 @@
  */
 
 import { useMemo, useState } from "react";
-import type { WorkflowContent } from "@/lib/workflow/model";
+import type { ResourceScope } from "@/components/resource/api";
+import type { Operator, WorkflowContent } from "@/lib/workflow/model";
 import type { OperatorMetadata } from "@/lib/workflow/operator-schema";
-import { PropertyPanel } from "./property-panel";
-import { type Selection, WorkflowCanvas } from "./workflow-canvas";
+import { useCardDensity } from "../use-card-density";
+import { useChipsShown } from "../use-chips-shown";
+import { OperatorProperties } from "./operator-properties";
+import { WorkflowCanvas } from "./workflow-canvas";
 
 export interface WorkflowViewProps {
   content: WorkflowContent;
   metadata: OperatorMetadata;
+  /**
+   * Whose datasets and models a chip looks up once it is opened: those the viewer may read, if they are signed in,
+   * or else the public ones.
+   */
+  resourceScope: ResourceScope;
 }
 
 /**
- * A workflow to look at, as the hub shows a public one: its canvas, and the properties of the operator that is
- * selected on it. Nothing in it can be changed.
+ * A workflow to look at, as the hub shows a public one: its canvas, where each operator's card opens to show its
+ * properties, and the chips above the cards name the datasets and models they read, which open to what the viewer
+ * may read of them. Nothing in it can be changed.
  */
-export function WorkflowView({ content, metadata }: WorkflowViewProps) {
-  const [selection, setSelection] = useState<Selection>();
+export function WorkflowView({ content, metadata, resourceScope }: WorkflowViewProps) {
   const schemas = useMemo(() => new Map(metadata.operators.map(schema => [schema.operatorType, schema])), [metadata]);
-  const typeNames = useMemo(
-    () =>
-      Object.fromEntries(metadata.operators.map(each => [each.operatorType, each.additionalMetadata.userFriendlyName])),
-    [metadata]
-  );
-  const selected =
-    selection?.operators.length === 1
-      ? content.operators.find(each => each.operatorID === selection.operators[0])
-      : undefined;
-  const schema = selected && schemas.get(selected.operatorType);
+  const [density] = useCardDensity();
+  const [chips] = useChipsShown();
+  /** The operator whose card is open. */
+  const [editing, setEditing] = useState<string>();
+
+  function properties(operator: Operator) {
+    const schema = schemas.get(operator.operatorType);
+    return (
+      schema && (
+        <OperatorProperties
+          operator={operator}
+          schema={schema}
+          inputSchemas={[]}
+          disabled
+          onProperty={() => {}}
+        />
+      )
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 rounded-lg border">
       <div className="min-w-0 flex-1">
         <WorkflowCanvas
           content={content}
-          typeNames={typeNames}
+          schemas={schemas}
+          density={density}
+          chips={chips}
+          resourceScope={resourceScope}
           readOnly
-          onSelect={setSelection}
+          editing={editing}
+          onEdit={setEditing}
+          card={properties}
         />
       </div>
-      {selected && schema && (
-        <aside className="w-80 shrink-0 overflow-y-auto border-l">
-          <PropertyPanel
-            key={selected.operatorID}
-            operator={selected}
-            schema={schema}
-            inputSchemas={[]}
-            disabled
-            onPatch={() => {}}
-            onProperty={() => {}}
-          />
-        </aside>
-      )}
     </div>
   );
 }

@@ -29,17 +29,20 @@ Here so far:
   highlighted, JSON laid out, Markdown formatted, a page, an image, a PDF, a video or a sound; of a big file, its
   start), the lists of **workflows** and **models**, and sharing any of them, with people or with everyone through
   the hub.
-- **The workflow editor**: the canvas with its menu, copying and pasting (through the system clipboard, so pieces
-  move between workflows, tabs and apps), comments, the properties of an operator, its code with the parameters it
-  declares, editing together with other people, a workflow's settings, and the workflow as JSON or as Python. Its
-  panels float over the canvas, as in the Angular app: the workspace (operators, versions, executions, settings) on
-  the left, what is selected on the right, and the execution at the bottom. Each is dragged by its header, resized
-  by its edges, minimized, and docked again; the workspace's rail of views is put in another order by dragging its
-  icons, or with Alt and an arrow key. The browser keeps all of it as the user left it.
+- **The workflow editor**: the canvas, where each operator is a card whose settings are edited in the card itself,
+  with chips around it of the datasets and models it reads and of the result it kept (see [The Canvas](#the-canvas));
+  its menu, copying and pasting (through the system clipboard, so pieces move between workflows, tabs and apps),
+  comments, an operator's code with the parameters it declares, editing together with other people, a workflow's
+  settings, and the workflow as JSON or as Python. Panels float over the canvas, as in the Angular app: the workspace
+  (operators, versions, executions, settings) on the left, the comments, the code and what a version changed on the
+  right, and the execution at the bottom. Each is dragged by its header, resized by its edges, minimized, and docked
+  again; the workspace's rail of views is put in another order by dragging its icons, or with Alt and an arrow key.
+  The browser keeps all of it as the user left it.
 - **A workflow's history**: each version with what its save changed, shown in place of the workflow with what
   changed marked on the canvas and listed beside it (code side by side), restored for everyone as one step to undo;
   and its executions, with their statistics and the version each executed.
-- **Executing**: the controls, executing up to one operator, results, console and errors.
+- **Executing**: the controls, executing up to one operator (from its card or the canvas's menu), results, console
+  and errors.
 - **Computing units**, **environments**, **quota**, **sign-up**, the **hub** (public workflows, datasets and
   models, a public workflow to look inside, like and copy), and the administration's **users**, **executions**,
   **computing units** and **settings**. The navigation leaves out what the settings switch off.
@@ -68,7 +71,7 @@ frontend-react/
     │   ├── resource/   #   what every kind of resource shares: list, page header, sharing, deleting, versions
     │   └── settings/   #   the deployment's public settings, which the navigation and the uploads follow
     ├── features/       # one folder per feature: its backend calls and its components
-    │   ├── workflow/   #   the editor: canvas, menu, comments, properties and code, history, who else is there
+    │   ├── workflow/   #   the editor: canvas, cards, chips, menu, comments, code, history, who else is there
     │   ├── execution/  #   executing a workflow: unit, controls, results, console, errors, past executions
     │   ├── computing-unit/  # the user's computing units, and making one
     │   ├── hub/        #   what is public: the lists, a public workflow, likes and copies
@@ -76,9 +79,10 @@ frontend-react/
     │   └── auth/ dataset/ environment/ model/ quota/
     ├── lib/            # shared code without React: the API client, the session, the theme, the resource model
     │   ├── workflow/   #   a workflow as it is saved, its document and room for editing together, what compiles
+    │   │               #   and what its cards say, and where the canvas draws them
     │   └── execution/  #   starting an execution and the engine's socket: their messages, and the client
     ├── styles/         # design tokens: colors, radius, fonts
-    └── testing/        # test helpers and the fake backend
+    └── testing/        # test and story helpers, and the fake backend
 ```
 
 ## Quick Start
@@ -111,6 +115,31 @@ another gateway, or `TEXERA_LOCAL_DEV=1` to use the services of a `bin/local-dev
 `REACT_S3_PORT` move the test backend from ports 18080 and 19000; then point `TEXERA_GATEWAY` and `E2E_GATEWAY` at the
 new gateway.
 
+## The Canvas
+
+Each operator on a workflow's canvas is a card: the picture of its type, its name, and its settings in one line under
+it, or each setting on a line of its own once the viewer chooses "Show every setting on its card" in the editor's
+menu. While or after an execution, a line under it says the operator's state and the rows it took and put out. Its
+buttons execute the workflow up to it, keep its result after each execution (the eye), and open it. A card that
+cannot be executed as it is says why, and one left out of executions is faded. The canvas is React Flow
+(`src/features/workflow/components/workflow-canvas.tsx`).
+
+An operator's settings are edited in its card, which opens in place with its pencil, a double click or Enter, and
+closes with Done, Escape or a click on the empty canvas: one card open at a time, which holds the operator's name, its
+settings and its code's button. A change is in the workflow as it is made, so closing saves nothing more. While a card
+is open, the cards under it, in its column, are drawn lower to make room for it, and the rows are drawn further apart
+where cards, with their chips, are taller than a row holds. That is the viewer's drawing only
+(`src/lib/workflow/canvas-geometry.ts`): the workflow keeps its places as if every card were closed and said its
+settings in one line, and a card that is moved is kept where it was dropped. A workflow laid out for the Angular app's
+tiles, which stand closer, may need "Arrange the operators" for its cards to have their room.
+
+Above a card stand chips of the versions of the datasets and models its operator reads, which its settings name by
+their paths (`src/lib/resource-path.ts`, which reads them as the backend does, and `src/lib/workflow/resources.ts`).
+A chip is drawn from its path alone, so everyone sees it; clicked, it says what the backend says of the resource, if
+the viewer may read it, with a link to its page. Under a card stands the chip of the result its operator kept in the
+execution shown, which shows the result in the execution's panel when it is clicked. "Show datasets, models and
+results" in the menu hides the chips. The browser keeps both choices, for every canvas.
+
 ## Editing Together
 
 A workflow is edited in its room on the shared editing service (`shared-editing-service/`, built on Hocuspocus, a
@@ -132,9 +161,18 @@ reached, and a change made while it was under way waits for the next one. A room
 saved again each time it has stayed its while, until it is saved, or until the backend refuses it for good, as for
 a workflow that was deleted.
 
-What each person sees of the others (who is there, what they have selected, their pointer, the code they have open
-and their cursor in it) is presence, kept by `src/lib/workflow/room.ts`. Following someone is the editor's own
-doing: it selects what they select, and opens and closes their code with them.
+What each person sees of the others (who is there, what they have selected, their pointer, the card they are editing,
+the code they have open and their cursor in it) is presence, kept by `src/lib/workflow/room.ts`, which also says how
+the others see this person (`me`). Following someone is the editor's own doing: it selects what they select, and
+opens and closes their code with them, never their card.
+
+One person at a time edits an operator's settings. Whoever opens its card to change it tells the others, and of two
+who open one card, whoever began first holds it until they close it or leave (`src/lib/workflow/holds.ts`, the one
+answer to who holds what). The others see "Grace is editing" on its card, in her color, and until she is done they
+open it only to read: its eye, the canvas's menu and the keys change, cut and delete nothing of it. They still move
+it, link it and type in its code, which is shared text. A hold stops changing, never reading, and it coordinates
+people in the app only: the service takes every change, and undo, redo and restoring a version do not look at holds.
+Someone who may only view the workflow, or who looks at a version, holds nothing.
 
 ## A Workflow's History
 
@@ -160,6 +198,10 @@ The story and end-to-end tests use the installed Google Chrome. The end-to-end t
 (the Playwright project `react`) and on the Angular app (`angular`), so the two are held to the same behavior;
 `yarn test:e2e --project=react` runs one of them. `E2E_GATEWAY` points the tests at another gateway, and
 `E2E_REACT_URL` at this app on a dev server, such as `http://localhost:5173/alpha/`.
+
+The stories of the workflow canvas and of the editor draw them from literal data, the editor on a workflow of its own
+that enters no room, and check in Chrome what jsdom cannot see: where cards and chips are drawn, what is seen, and
+that no text is under 12px. Each checks that it asked the backend nothing.
 
 The tests in `e2e/workflow/`, `e2e/compute/` and `e2e/hub/` are of what only this app has: building a workflow, the
 columns each operator is offered, executing, writing a Python UDF and its parameters, two people editing one

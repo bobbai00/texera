@@ -28,6 +28,8 @@ test("user duplicates an operator, copies and pastes one with the keyboard, and 
   await editor.open(workflow);
   await editor.addOperator("Text Input");
   await (await editor.select("Text Input")).getByLabel("Text *").fill("ada\ngrace");
+  // A right click in an open card is the browser's, as in any field: the canvas's menu opens on a closed one.
+  await editor.closeCard("Text Input");
 
   // The menu on an operator acts on it.
   await (await editor.openMenu("Text Input")).getByRole("menuitem", { name: /Duplicate/ }).click();

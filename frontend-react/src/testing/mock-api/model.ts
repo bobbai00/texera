@@ -22,7 +22,7 @@
 
 import { http, HttpResponse } from "msw/http";
 import { admin } from "../fixtures";
-import { errorResponse, type MockPrivilege, type MockResource } from "./access";
+import { errorResponse, type MockPrivilege, type MockResource, privilegeOf } from "./access";
 import { signedInUser } from "./auth";
 import type { MockDb } from "./index";
 
@@ -32,6 +32,17 @@ export interface MockModel {
   name: string;
   description: string;
   /** In epoch milliseconds. */
+  creationTime: number;
+  /** What it was made with, such as "PyTorch", and how it is saved, as its owner said, if they did. */
+  framework?: string;
+  format?: string;
+  /** In the order they were made. */
+  versions: MockModelVersion[];
+}
+
+export interface MockModelVersion {
+  mvid: number;
+  name: string;
   creationTime: number;
 }
 
@@ -43,16 +54,33 @@ export interface ModelSeed {
   isPublic?: boolean;
   grants?: MockResource["grants"];
   creationTime?: number;
+  framework?: string;
+  format?: string;
+  /** Oldest first. Each is made a day after the one before it. */
+  versions?: { name: string }[];
 }
 
-/** Adds a model, as if its owner had made it, and returns it. */
+const noAccess = "User has no access to this model";
+const day = 24 * 60 * 60 * 1000;
+
+/** Adds a model, as if its owner had made it and its versions, and returns it. */
 export function addModel(db: MockDb, seed: ModelSeed): MockModel {
-  const { name, description = "", ownerUid = admin.uid, isPublic = false, grants = [] } = seed;
+  const { name, description = "", ownerUid = admin.uid, isPublic = false, grants = [], versions = [] } = seed;
+  const creationTime = seed.creationTime ?? Date.UTC(2026, 10, 12, 12);
+  // Version ids are unique across models, like the server's serial mvid.
+  const firstMvid = Math.max(0, ...db.models.flatMap(model => model.versions.map(version => version.mvid))) + 1;
   const model: MockModel = {
     mid: Math.max(0, ...db.models.map(other => other.mid)) + 1,
     name,
     description,
-    creationTime: seed.creationTime ?? Date.UTC(2026, 10, 12, 12),
+    creationTime,
+    ...(seed.framework !== undefined && { framework: seed.framework }),
+    ...(seed.format !== undefined && { format: seed.format }),
+    versions: versions.map((version, index) => ({
+      mvid: firstMvid + index,
+      name: version.name,
+      creationTime: creationTime + (index + 1) * day,
+    })),
   };
   db.models.push(model);
   db.resources.push({ type: "model", id: model.mid, ownerUid, isPublic, grants });
@@ -61,10 +89,10 @@ export function addModel(db: MockDb, seed: ModelSeed): MockModel {
 
 /** A model as the server sends it (DashboardModel) to a user with this privilege on it. */
 export function dashboardModel(db: MockDb, model: MockModel, uid: number, accessPrivilege: MockPrivilege | "NONE") {
-  const { mid, name, description, creationTime } = model;
+  const { mid, name, description, creationTime, framework = null, format = null } = model;
   const { ownerUid, isPublic } = db.resources.find(resource => resource.type === "model" && resource.id === mid)!;
   return {
-    model: { mid, name, description, isPublic, creationTime },
+    model: { mid, name, description, isPublic, creationTime, framework, format },
     ownerEmail: db.users.find(user => user.uid === ownerUid)!.email,
     accessPrivilege,
     isOwner: ownerUid === uid,
@@ -72,18 +100,46 @@ export function dashboardModel(db: MockDb, model: MockModel, uid: number, access
 }
 
 export function modelHandlers(db: MockDb) {
+  const resourceOf = (mid: number) =>
+    db.resources.find(candidate => candidate.type === "model" && candidate.id === mid);
+
   return [
     // DELETE /model/{mid}: only its owner may delete a model.
     http.delete<{ mid: string }>("/api/model/:mid", ({ request, params }) => {
       const user = signedInUser(db, request);
       if (user instanceof Response) return user;
       const mid = Number(params.mid);
-      const resource = db.resources.find(candidate => candidate.type === "model" && candidate.id === mid);
+      const resource = resourceOf(mid);
       if (!resource) return errorResponse(404, `Model ${mid} not found`);
-      if (resource.ownerUid !== user.uid) return errorResponse(403, "User has no access to this model");
+      if (resource.ownerUid !== user.uid) return errorResponse(403, noAccess);
       db.models = db.models.filter(model => model.mid !== mid);
       db.resources = db.resources.filter(other => other !== resource);
       return new HttpResponse();
     }),
+
+    // GET /model/{mid}/version/list: newest first, to whoever may read the model, as its owner, as one it is shared
+    // with, or because it is public.
+    http.get<{ mid: string }>("/api/model/:mid/version/list", ({ request, params }) => {
+      const user = signedInUser(db, request);
+      if (user instanceof Response) return user;
+      const model = db.models.find(candidate => candidate.mid === Number(params.mid));
+      if (!model) return errorResponse(404, `Model ${params.mid} not found`);
+      const resource = resourceOf(model.mid)!;
+      if (!resource.isPublic && privilegeOf(resource, user.uid) === "NONE") return errorResponse(403, noAccess);
+      return HttpResponse.json(model.versions.toReversed().map(modelVersion));
+    }),
+
+    // GET /model/{mid}/publicVersion/list: the versions of a public model, to anyone, signed in or not.
+    http.get<{ mid: string }>("/api/model/:mid/publicVersion/list", ({ params }) => {
+      const model = db.models.find(candidate => candidate.mid === Number(params.mid));
+      if (!model) return errorResponse(404, `Model ${params.mid} not found`);
+      if (!resourceOf(model.mid)!.isPublic) return errorResponse(403, noAccess);
+      return HttpResponse.json(model.versions.toReversed().map(modelVersion));
+    }),
   ];
+}
+
+/** A version as the server sends it (ModelVersion), with the fields the app reads. */
+function modelVersion({ mvid, name, creationTime }: MockModelVersion) {
+  return { mvid, name, creationTime };
 }

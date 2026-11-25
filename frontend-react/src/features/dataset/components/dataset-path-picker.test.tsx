@@ -112,6 +112,49 @@ describe("DatasetFilePicker", () => {
     expect(await within(dialog).findByRole("list", { name: "Datasets" })).toBeVisible();
   });
 
+  it("reads the path as the server does, of a dataset named dataset with a folder named dataset too", async () => {
+    addDataset(db, {
+      name: "dataset",
+      versions: [{ name: "v1", files: { "dataset/adelie.csv": "species\nAdelie\n" } }],
+    });
+    signInAs(admin);
+    const { user } = renderPicker(DatasetFilePicker, "/dataset/texera/dataset/v1/dataset/adelie.csv");
+    const field = screen.getByRole("button", { name: "File" });
+    expect(field).toHaveTextContent("adelie.csvdataset · v1");
+
+    await user.click(field);
+    const dialog = screen.getByRole("dialog", { name: "Choose a file" });
+    expect(await within(dialog).findByRole("heading", { name: "dataset" })).toBeVisible();
+    expect(await within(dialog).findByRole("combobox", { name: "Version" })).toHaveTextContent("v1");
+  });
+
+  it("reads a path without the prefix, as the paths of datasets were written before", () => {
+    addDatasets();
+    renderPicker(DatasetFilePicker, "/texera/penguins/v1/adelie.csv");
+
+    expect(screen.getByRole("button", { name: "File" })).toHaveTextContent("adelie.csvpenguins · v1");
+  });
+
+  it("shows a file of a model that is chosen, which an operator reads as any other file", async () => {
+    addDatasets();
+    const { user } = renderPicker(DatasetFilePicker, "/model/texera/resnet/v3/labels.csv");
+    const field = screen.getByRole("button", { name: "File" });
+    expect(field).toHaveTextContent("labels.csvresnet · v3");
+    expect(field).toHaveAttribute("title", "/model/texera/resnet/v3/labels.csv");
+
+    // There is no dataset of it to open on: the datasets are offered to pick from.
+    await user.click(field);
+    const dialog = screen.getByRole("dialog", { name: "Choose a file" });
+    expect(await within(dialog).findByRole("list", { name: "Datasets" })).toBeVisible();
+  });
+
+  it("shows no file for the path of a version as a whole, which names none", () => {
+    addDatasets();
+    renderPicker(DatasetFilePicker, "/dataset/texera/penguins/v1");
+
+    expect(screen.getByRole("button", { name: "File" })).toHaveTextContent("Choose a file");
+  });
+
   it("says so when a dataset has no version to pick a file from, and when no dataset is found", async () => {
     addDatasets();
     const { user } = renderPicker(DatasetFilePicker);
@@ -160,5 +203,14 @@ describe("DatasetVersionPicker", () => {
 
     expect(onChange).toHaveBeenCalledWith("/dataset/texera/penguins/v1");
     expect(screen.getByRole("button", { name: "File" })).toHaveTextContent("penguinsv1");
+  });
+
+  it("takes the path of a model's version for no dataset, and shows the path on hover", () => {
+    addDatasets();
+    renderPicker(DatasetVersionPicker, "/model/texera/resnet/v1");
+
+    const field = screen.getByRole("button", { name: "File" });
+    expect(field).toHaveTextContent("Choose a dataset version");
+    expect(field).toHaveAttribute("title", "/model/texera/resnet/v1");
   });
 });

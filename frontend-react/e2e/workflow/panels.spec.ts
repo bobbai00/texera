@@ -19,15 +19,9 @@
 
 import { expect, test } from "../support/fixtures.ts";
 
-test("user moves and widens the workspace panel, minimizes the properties, and finds both as they left them", async ({
-  editor,
-  backend,
-  page,
-}) => {
+test("user moves and widens the workspace panel, and finds it as they left it", async ({ editor, backend, page }) => {
   const workflow = await backend.createWorkflow(backend.workflowName("panels"));
   await editor.open(workflow);
-  await editor.addOperator("Text Input");
-  await editor.select("Text Input");
   const docked = await editor.panelBox("Operators");
 
   await editor.movePanel("Operators", 120, 80);
@@ -35,17 +29,10 @@ test("user moves and widens the workspace panel, minimizes the properties, and f
   const moved = { x: docked.x + 120, y: docked.y + 80, width: docked.width + 60 };
   await expect.poll(() => editor.panelBox("Operators")).toEqual(moved);
 
-  await editor.panel("Properties").getByRole("button", { name: "Minimize Properties" }).click();
-  await expect(editor.properties("Text Input")).toBeHidden();
-
-  // The browser keeps the panels as the user left them.
+  // The browser keeps the panel as the user left it.
   await page.reload();
   await expect(editor.canvas).toBeVisible();
   await expect.poll(() => editor.panelBox("Operators")).toEqual(moved);
-  await editor.operator("Text Input").click();
-  await expect(editor.properties("Text Input")).toBeHidden();
-  await page.getByRole("button", { name: "Properties", exact: true }).click();
-  await expect(editor.properties("Text Input")).toBeVisible();
 
   // Docked again, the panel goes back to its place, as wide as the user made it.
   await editor.panel("Operators").getByRole("button", { name: "Dock Operators" }).click();

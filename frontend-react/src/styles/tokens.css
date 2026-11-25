@@ -56,6 +56,11 @@
   --sidebar: oklch(0.972 0.006 214);
   --success: oklch(0.56 0.13 152);
   --warning: oklch(0.68 0.14 75);
+  /* A green for datasets and a violet for models, the resources that operators read: dark enough to read as text and
+     to show as an edge on every surface a chip stands on, and apart from the colors of people and of how an operator
+     did (kinds.test.ts). */
+  --kind-dataset: oklch(0.46 0.11 155);
+  --kind-model: oklch(0.48 0.15 282);
   /* The colors that the other people editing a workflow are shown in, with white text on them in both themes. */
   --presence-1: oklch(0.55 0.17 300);
   --presence-2: oklch(0.56 0.15 35);
@@ -96,6 +101,9 @@
   --sidebar: oklch(0.19 0.009 232);
   --success: oklch(0.72 0.14 152);
   --warning: oklch(0.8 0.13 80);
+  /* Light enough to read as text and to show as an edge on every surface a chip stands on (kinds.test.ts). */
+  --kind-dataset: oklch(0.79 0.12 155);
+  --kind-model: oklch(0.7 0.15 282);
   --syntax-keyword: oklch(0.78 0.13 300);
   --syntax-string: oklch(0.8 0.12 150);
   --syntax-number: oklch(0.8 0.12 60);

@@ -61,7 +61,7 @@ export class WorkflowEditor {
     return this.canvas.getByRole("group", { name, exact: true });
   }
 
-  /** Adds an operator of a type from the menu. It goes to the right of the others. */
+  /** Adds an operator of a type from the menu. It goes to the right of the others, with its card open. */
   async addOperator(typeName: string): Promise<void> {
     await this.page.getByRole("searchbox", { name: "Search operators" }).fill(typeName);
     await this.page.getByRole("button", { name: typeName, exact: true }).click();
@@ -80,17 +80,46 @@ export class WorkflowEditor {
     await this.operator(to).getByLabel("Input port 1").click();
   }
 
-  /** Selects an operator, and returns the panel with its properties. */
+  /**
+   * Selects an operator and opens its card, as Enter on the operator does, and returns the card's properties. A click
+   * only selects it. On a workflow that is only looked at, the card opens to read.
+   */
   async select(name: string): Promise<Locator> {
     await this.showAll();
-    await this.operator(name).click();
+    await this.operator(name).focus();
+    await this.page.keyboard.press("Enter");
     const properties = this.properties(name);
     await expect(properties).toBeVisible();
     return properties;
   }
 
+  /** The properties of an operator, in its card while the card is open. */
   properties(name: string): Locator {
-    return this.page.getByRole("region", { name: `Properties of ${name}` });
+    return this.canvas.getByRole("region", { name: `Properties of ${name}` });
+  }
+
+  /** Closes an operator's card with its Done button. */
+  async closeCard(name: string): Promise<void> {
+    await this.properties(name).getByRole("button", { name: "Done" }).click();
+    await expect(this.properties(name)).toBeHidden();
+  }
+
+  /** Keeps an operator's result after each execution, with the eye in its card. */
+  async keepResult(name: string): Promise<void> {
+    const eye = (await this.select(name)).getByRole("button", { name: `Keep the result of ${name}`, exact: true });
+    await expect(eye).toHaveAttribute("aria-pressed", "false");
+    await eye.click();
+    await expect(eye).toHaveAttribute("aria-pressed", "true");
+  }
+
+  /** The chip of a dataset's or a model's version that an operator reads, above its card, by their names. */
+  resourceChip(name: string, version: string): Locator {
+    return this.canvas.getByRole("button", { name: `${name} ${version}`, exact: true });
+  }
+
+  /** The chip of the result an operator kept in the execution shown, under its card: "2 rows", or "Visualization". */
+  resultChip(name: string, kept: string): Locator {
+    return this.canvas.getByRole("button", { name: `Result of ${name}: ${kept}`, exact: true });
   }
 
   /** Picks one of the options of a field that offers a choice. */
@@ -117,7 +146,7 @@ export class WorkflowEditor {
     return this.code(name).getByRole("textbox");
   }
 
-  /** Opens the code of the operator that is selected. */
+  /** Opens an operator's code, from its card while the card is open. */
   async openCode(name: string): Promise<void> {
     await this.properties(name)
       .getByRole("button", { name: /the Python code$/ })
@@ -187,7 +216,7 @@ export class WorkflowEditor {
   }
 
   /**
-   * A panel that floats over the canvas, by its title: "Operators" (or the workspace's other views), "Properties",
+   * A panel that floats over the canvas, by its title: "Operators" (or the workspace's other views), "Comments",
    * "Execution", and so on.
    */
   panel(title: string): Locator {

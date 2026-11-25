@@ -347,6 +347,14 @@ export function datasetHandlers(db: MockDb) {
       return HttpResponse.json(dataset.versions.toReversed().map(datasetVersion));
     }),
 
+    // GET /dataset/{did}/publicVersion/list: the versions of a public dataset, to anyone, signed in or not. One that
+    // is not there is no public one either.
+    http.get<{ did: string }>("/api/dataset/:did/publicVersion/list", ({ params }) => {
+      const dataset = db.datasets.find(candidate => candidate.did === Number(params.did));
+      if (!dataset || !resourceOf(dataset).isPublic) return errorResponse(403, noAccess);
+      return HttpResponse.json(dataset.versions.toReversed().map(datasetVersion));
+    }),
+
     // GET /dataset/{did}/version/{dvid}/rootFileNodes -> {fileNodes}: the files and folders at the top of the version.
     http.get<{ did: string; dvid: string }>("/api/dataset/:did/version/:dvid/rootFileNodes", ({ request, params }) => {
       const found = authorize(request, Number(params.did), "READ");

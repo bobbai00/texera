@@ -18,12 +18,14 @@
  */
 
 import { screen, waitFor, within } from "@testing-library/react";
+import { http } from "msw/http";
 import { describe, expect, it } from "vitest";
 import { admin, reader } from "@/testing/fixtures";
 import { db } from "@/testing/mock-api";
 import { addDataset } from "@/testing/mock-api/dataset";
 import { addWorkflow } from "@/testing/mock-api/workflow";
 import { renderApp } from "@/testing/render";
+import { server } from "@/testing/server";
 import { sessionFor } from "@/testing/session";
 import { link, operator, workflowContent } from "@/testing/workflow";
 
@@ -74,18 +76,85 @@ describe("the hub", () => {
     expect(screen.getByRole("list", { name: "Public datasets" })).toHaveTextContent("Penguins");
   });
 
-  it("opens a public workflow as the public sees it, with the properties of each operator to look at", async () => {
+  it("opens a public workflow as the public sees it, with the card of each operator to open and read", async () => {
     const { wid } = addPublicWorkflow();
     const { user } = renderApp(`/hub/workflows/${wid}`);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Penguin masses" })).toBeInTheDocument();
-    within(screen.getByLabelText("Workflow canvas")).getByRole("group", { name: "Limit" }).focus();
+    const limit = within(screen.getByLabelText("Workflow canvas")).getByRole("group", { name: "Limit" });
+    expect(limit).toHaveTextContent("Limit 5");
+    limit.focus();
     await user.keyboard("{Enter}");
 
-    const properties = await screen.findByRole("region", { name: "Properties of Limit" });
+    const properties = await within(limit).findByRole("region", { name: "Properties of Limit" });
     expect(within(properties).getByRole("spinbutton", { name: "Limit *" })).toHaveValue(5);
     expect(within(properties).getByRole("spinbutton", { name: "Limit *" })).toBeDisabled();
+    // The operator's properties are on its card, and nowhere beside the canvas.
+    expect(screen.queryByRole("complementary")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Sign in to make a copy" })).toBeInTheDocument();
+  });
+
+  it("shows above a public workflow's operators the versions they read, looked up as anyone may", async () => {
+    const dataset = addDataset(db, {
+      name: "penguins",
+      description: "Palmer Archipelago penguins",
+      ownerUid: reader.uid,
+      isPublic: true,
+      versions: [{ name: "v1", files: { "penguins.csv": "" } }],
+    });
+    const workflow = addWorkflow(db, {
+      name: "Penguin masses",
+      ownerUid: reader.uid,
+      content: workflowContent([
+        operator("CSVFileScan", "scan", { fileName: "/dataset/reader@example.com/penguins/v1/penguins.csv" }),
+      ]),
+    });
+    db.resources.find(resource => resource.type === "workflow" && resource.id === workflow.wid)!.isPublic = true;
+    const searched: string[] = [];
+    server.use(http.get("/api/dashboard/:search", ({ params }) => void searched.push(String(params.search))));
+    const { user } = renderApp(`/hub/workflows/${workflow.wid}`);
+
+    const canvas = await screen.findByLabelText("Workflow canvas");
+    await user.click(await within(canvas).findByRole("button", { name: "penguins v1" }));
+
+    const details = await screen.findByRole("dialog", { name: "penguins" });
+    expect(await within(details).findByText("Palmer Archipelago penguins")).toBeInTheDocument();
+    expect(await within(details).findByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      `/datasets/${dataset.did}?version=${dataset.versions[0].dvid}&file=penguins.csv`
+    );
+    expect(searched).toEqual(["publicSearch"]);
+  });
+
+  it("looks the versions up among what the user may read, for whoever is signed in, their own private ones too", async () => {
+    const dataset = addDataset(db, {
+      name: "penguins",
+      description: "Palmer Archipelago penguins",
+      ownerUid: reader.uid,
+      versions: [{ name: "v1", files: { "penguins.csv": "" } }],
+    });
+    const workflow = addWorkflow(db, {
+      name: "Penguin masses",
+      ownerUid: reader.uid,
+      content: workflowContent([
+        operator("CSVFileScan", "scan", { fileName: "/dataset/reader@example.com/penguins/v1/penguins.csv" }),
+      ]),
+    });
+    db.resources.find(resource => resource.type === "workflow" && resource.id === workflow.wid)!.isPublic = true;
+    const searched: string[] = [];
+    server.use(http.get("/api/dashboard/:search", ({ params }) => void searched.push(String(params.search))));
+    const { user } = renderApp(`/hub/workflows/${workflow.wid}`, { session: sessionFor(reader) });
+
+    const canvas = await screen.findByLabelText("Workflow canvas");
+    await user.click(await within(canvas).findByRole("button", { name: "penguins v1" }));
+
+    const details = await screen.findByRole("dialog", { name: "penguins" });
+    expect(await within(details).findByText("Palmer Archipelago penguins")).toBeInTheDocument();
+    expect(await within(details).findByRole("link", { name: "Open" })).toHaveAttribute(
+      "href",
+      `/datasets/${dataset.did}?version=${dataset.versions[0].dvid}&file=penguins.csv`
+    );
+    expect(searched).toEqual(["search"]);
   });
 
   it("likes a public workflow, and copies it into a workflow of the user's, which opens", async () => {

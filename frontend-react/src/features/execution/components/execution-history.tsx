@@ -37,7 +37,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { ExecutionState } from "@/lib/execution/protocol";
-import { formatDuration, formatTime } from "@/lib/format";
+import { formatDuration, formatRows, formatTime } from "@/lib/format";
 import {
   bookmarkExecution,
   deleteExecution,
@@ -318,7 +318,7 @@ function ExecutionStatistics({
       <TableHeader>
         <TableRow>
           <TableHead>Operator</TableHead>
-          <TableHead className="text-right">Rows out</TableHead>
+          <TableHead className="text-right">Rows</TableHead>
           <TableHead className="text-right">Time</TableHead>
           <TableHead>
             <span className="sr-only">Rows as they came</span>
@@ -329,7 +329,7 @@ function ExecutionStatistics({
         {statistics.map(operator => (
           <TableRow key={operator.operatorId}>
             <TableCell className="max-w-28 truncate">{name(operator.operatorId)}</TableCell>
-            <TableCell className="text-right tabular-nums">{operator.outputRows.toLocaleString("en-US")}</TableCell>
+            <TableCell className="text-right tabular-nums">{formatRows(operator)}</TableCell>
             <TableCell className="text-right tabular-nums">{formatDuration(operator.processingMs)}</TableCell>
             <TableCell>
               <Sparkline samples={operator.samples} />

@@ -57,6 +57,8 @@ function PublicWorkflowRoute() {
         <WorkflowView
           content={workflow.content}
           metadata={metadata}
+          // A chip finds what it names among what the viewer may read: someone signed out, the public ones alone.
+          resourceScope={session ? "yours" : "public"}
         />
       </div>
     </PublicWorkflowPage>

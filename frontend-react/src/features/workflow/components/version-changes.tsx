@@ -24,9 +24,12 @@ import { PagePending } from "@/components/layout/page";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { codeLanguage, codeProperty } from "@/lib/workflow/code";
-import { isUnchanged, nameOf, type OperatorChange, type ValueChange, type WorkflowDiff } from "@/lib/workflow/diff";
-import type { Link, Operator } from "@/lib/workflow/model";
+import { isUnchanged, type OperatorChange, type ValueChange, type WorkflowDiff } from "@/lib/workflow/diff";
+import type { Link, Operator, PortDescription } from "@/lib/workflow/model";
 import type { OperatorSchema } from "@/lib/workflow/operator-schema";
+import { fieldLabel, type PropertyField, resolve } from "@/lib/workflow/property-schema";
+import { changeTexts, valueText } from "@/lib/workflow/summary";
+import { operatorName } from "../operator-name";
 
 export interface VersionChangesProps {
   diff: WorkflowDiff;
@@ -48,6 +51,9 @@ const fieldNames: Record<string, string> = {
   outputPorts: "Output ports",
 };
 
+/** The operator's own values that hold its ports. */
+const portSides = new Set(["inputPorts", "outputPorts"]);
+
 const settingNames: Record<string, string> = {
   dataTransferBatchSize: "Batch size",
   executionMode: "Execution mode",
@@ -59,7 +65,7 @@ export function VersionChanges({ diff, schemas, onShow }: VersionChangesProps) {
   const { added, removed, changed, moved, addedLinks, removedLinks, comments, settings } = diff;
   const operatorNamed = (id: string) => {
     const operator = [...diff.after.operators, ...diff.before.operators].find(each => each.operatorID === id);
-    return operator ? nameOf(operator) : id;
+    return operator ? operatorName(operator, schemas) : id;
   };
   const linkName = ({ source, target }: Link) =>
     `${operatorNamed(source.operatorID)} → ${operatorNamed(target.operatorID)}`;
@@ -73,6 +79,7 @@ export function VersionChanges({ diff, schemas, onShow }: VersionChangesProps) {
           <OperatorItem
             key={operator.operatorID}
             operator={operator}
+            name={operatorName(operator, schemas)}
             onShow={onShow}
           />
         ))}
@@ -84,6 +91,7 @@ export function VersionChanges({ diff, schemas, onShow }: VersionChangesProps) {
           <OperatorItem
             key={operator.operatorID}
             operator={operator}
+            name={operatorName(operator, schemas)}
             onShow={onShow}
           />
         ))}
@@ -95,6 +103,7 @@ export function VersionChanges({ diff, schemas, onShow }: VersionChangesProps) {
           <ChangedOperator
             key={change.operator.operatorID}
             change={change}
+            name={operatorName(change.operator, schemas)}
             schema={schemas.get(change.operator.operatorType)}
             onShow={onShow}
           />
@@ -137,7 +146,7 @@ export function VersionChanges({ diff, schemas, onShow }: VersionChangesProps) {
           <ValueItem
             key={change.key}
             label={settingNames[change.key] ?? change.key}
-            change={change}
+            texts={changeTexts(change.before, change.after)}
           />
         ))}
       />
@@ -173,13 +182,13 @@ function ShowButton({ id, onShow, children }: { id: string; onShow: (id: string)
   );
 }
 
-function OperatorItem({ operator, onShow }: { operator: Operator; onShow: (id: string) => void }) {
+function OperatorItem({ operator, name, onShow }: { operator: Operator; name: string; onShow: (id: string) => void }) {
   return (
     <li>
       <ShowButton
         id={operator.operatorID}
         onShow={onShow}>
-        {nameOf(operator)}
+        {name}
       </ShowButton>
     </li>
   );
@@ -187,61 +196,84 @@ function OperatorItem({ operator, onShow }: { operator: Operator; onShow: (id: s
 
 function ChangedOperator({
   change,
+  name,
   schema,
   onShow,
 }: {
   change: OperatorChange;
+  /** The name the operator goes by. */
+  name: string;
   schema: OperatorSchema | undefined;
   onShow: (id: string) => void;
 }) {
   const { operator, properties, fields } = change;
   const language = codeLanguage(operator.operatorType);
-  const label = (key: string) => {
-    const property = schema?.jsonSchema.properties?.[key];
-    return (typeof property === "object" && property.title) || key;
-  };
+  const root = schema?.jsonSchema ?? {};
+  // A property is read and named as its field of the form, which the operator's schema describes.
+  const fieldOf = (key: string): PropertyField => ({
+    key,
+    schema: resolve(root.properties?.[key] ?? {}, root),
+    required: false,
+  });
   return (
     <li className="space-y-1">
       <ShowButton
         id={operator.operatorID}
         onShow={onShow}>
-        {nameOf(operator)}
+        {name}
       </ShowButton>
       <ul className="space-y-1 border-l pl-3 text-muted-foreground">
         {fields.map(field => (
           <ValueItem
             key={field.key}
             label={fieldNames[field.key] ?? field.key}
-            change={field}
+            texts={portSides.has(field.key) ? portTexts(field) : changeTexts(field.before, field.after)}
           />
         ))}
-        {properties.map(property =>
-          property.key === codeProperty && language ? (
-            <CodeItem
-              key={property.key}
-              name={nameOf(operator)}
-              change={property}
-              language={language}
-            />
-          ) : (
+        {properties.map(property => {
+          if (property.key === codeProperty && language) {
+            return (
+              <CodeItem
+                key={property.key}
+                name={name}
+                change={property}
+                language={language}
+              />
+            );
+          }
+          const field = fieldOf(property.key);
+          return (
             <ValueItem
               key={property.key}
-              label={label(property.key)}
-              change={property}
+              label={fieldLabel(field)}
+              texts={changeTexts(property.before, property.after, field, root)}
             />
-          )
-        )}
+          );
+        })}
       </ul>
     </li>
   );
 }
 
-function ValueItem({ label, change }: { label: string; change: ValueChange }) {
+/** A change of an operator's ports, which read by their names, or, where those stayed the same, as any change does. */
+function portTexts({ before, after }: ValueChange): [string, string] {
+  const names = (ports: unknown) =>
+    Array.isArray(ports)
+      ? ports.map(port => {
+          const { displayName, portID } = (port ?? {}) as Partial<PortDescription>;
+          return displayName || portID;
+        })
+      : ports;
+  const named: [string, string] = [valueText(names(before)), valueText(names(after))];
+  return named[0] !== named[1] ? named : changeTexts(before, after);
+}
+
+/** A value that changed: what it was, and what it is. */
+function ValueItem({ label, texts: [before, after] }: { label: string; texts: [string, string] }) {
   return (
     <li>
-      <span className="text-foreground">{label}</span>:{" "}
-      <del className="decoration-destructive/60">{valueText(change.before)}</del> →{" "}
-      <ins className="text-foreground no-underline">{valueText(change.after)}</ins>
+      <span className="text-foreground">{label}</span>: <del className="decoration-destructive/60">{before}</del> →{" "}
+      <ins className="text-foreground no-underline">{after}</ins>
     </li>
   );
 }
@@ -312,11 +344,4 @@ function lineCounts(before: string, after: string): { added: number; removed: nu
     return missing;
   };
   return { added: count(now, old), removed: count(old, now) };
-}
-
-/** A value as it reads in a short line: text in quotes, a list or a group of values as JSON, shortened. */
-function valueText(value: unknown): string {
-  if (value === undefined || value === null || value === "") return "not set";
-  const text = typeof value === "string" ? `“${value}”` : JSON.stringify(value);
-  return text.length > 60 ? `${text.slice(0, 59)}…` : text;
 }

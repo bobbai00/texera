@@ -21,7 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { type ComputingUnit, computingUnitListQuery } from "@/components/resource/api";
 import { useStoredState } from "@/components/use-stored-state";
-import { ExecutionClient, type ExecutionSnapshot } from "@/lib/execution/client";
+import { activeStates, ExecutionClient, type ExecutionSnapshot } from "@/lib/execution/client";
 import { can } from "@/lib/resource";
 import { type Warehouse, warehouseListQuery, type Warehouses } from "./api";
 
@@ -44,6 +44,31 @@ export interface Execution {
   /** The connection to the unit, once a unit is chosen. Starting, stopping and paging results go through it. */
   client: ExecutionClient | undefined;
   snapshot: ExecutionSnapshot;
+}
+
+/**
+ * Whether the execution shown is under way on the unit, which can be asked to pause, resume or stop it. One that
+ * its unit does not show is the Dashboard service's to tell of, and the unit may be asked to start another.
+ */
+export const underWayOnUnit = ({ state, followedAtDashboard }: ExecutionSnapshot) =>
+  activeStates.has(state) && !followedAtDashboard;
+
+/**
+ * Why nothing can be executed now, whatever the workflow holds, if anything keeps it from being: the first of the
+ * reasons, in one order, what the user must do coming before what passes by itself. There is no unit to execute on;
+ * the deployment keeps each execution's results in a warehouse and the user has none, so the service would refuse
+ * it; the connection to the unit is not open yet; or the unit is busy with an execution.
+ */
+export function unitProblem({
+  client,
+  snapshot,
+  warehouseMissing,
+}: Pick<Execution, "client" | "snapshot" | "warehouseMissing">): string | undefined {
+  if (!client) return "Start a computing unit to execute.";
+  if (warehouseMissing) return "This deployment keeps each execution's results in a warehouse: create one first.";
+  if (!snapshot.connected) return "Connecting to the computing unit…";
+  if (underWayOnUnit(snapshot)) return "An execution is under way.";
+  return undefined;
 }
 
 const noSnapshot: ExecutionSnapshot = {

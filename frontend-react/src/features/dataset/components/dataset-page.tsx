@@ -24,11 +24,12 @@ import { EmptyState } from "@/components/feedback/empty-state";
 import { ErrorAlert } from "@/components/feedback/error-alert";
 import { Page } from "@/components/layout/page";
 import { Section } from "@/components/layout/section";
+import { versionListQuery } from "@/components/resource/api";
 import { ResourceActions } from "@/components/resource/resource-actions";
 import { ResourcePageHeader } from "@/components/resource/resource-page-header";
 import { VersionSelect } from "@/components/resource/version-select";
 import { can } from "@/lib/resource";
-import { datasetDeletion, datasetQuery, downloadDatasetFile, filePath, fileTreeQuery, versionListQuery } from "../api";
+import { datasetDeletion, datasetQuery, downloadDatasetFile, filePath, fileTreeQuery } from "../api";
 import { filesInOrder, firstFileOf, pathInVersion } from "../files";
 import { FilePreview } from "./file-preview";
 import { FileTree } from "./file-tree";
@@ -49,7 +50,7 @@ export interface DatasetPageProps {
 export function DatasetPage({ datasetId, versionId, file }: DatasetPageProps) {
   const navigate = useNavigate();
   const { data: dataset } = useSuspenseQuery(datasetQuery(datasetId));
-  const { data: versions } = useSuspenseQuery(versionListQuery(datasetId));
+  const { data: versions } = useSuspenseQuery(versionListQuery({ kind: "dataset", id: datasetId }));
   const mayEdit = can(dataset, "edit");
 
   // Another version shows the same file, where it has one.

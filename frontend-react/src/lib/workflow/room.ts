@@ -23,7 +23,9 @@
 // and what each person sees is what the room holds.
 //
 // Each person in a room also tells the others where they are: what they have selected, where their pointer is on
-// the canvas, and whose code they have open. Their cursor in that code is told by the code editor itself.
+// the canvas, whose settings they are editing in its card (whoever began first holds it, and the others do not
+// open it meanwhile: holds.ts), and whose code they have open. Their cursor in that code is told by the code editor
+// itself.
 
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import type { Awareness } from "y-protocols/awareness";
@@ -32,7 +34,7 @@ import { isAt, lineageOf, type WorkflowDocument } from "./document";
 import type { Point } from "./model";
 import { type Entry, roomName, roomRefilled, type SaveNotice, sharedEditingPath } from "./shared-editing";
 
-/** Someone else who has the workflow open. */
+/** Someone who has the workflow open, as everyone in its room sees them. */
 export interface Collaborator {
   /** Their document's id in the room. */
   clientId: number;
@@ -45,6 +47,20 @@ export interface Collaborator {
   pointer?: Point;
   /** The operator whose code they have open. */
   code?: string;
+  /**
+   * The operator whose settings they are editing in its card: whoever began first holds it, and the others do not
+   * open it meanwhile (holds.ts).
+   */
+  editing?: Claim;
+}
+
+/**
+ * What someone tells the others they are editing, their claim to it (holds.ts): an operator, and the moment they
+ * began, by their own clock. Told again after their connection was away, a claim begins anew.
+ */
+export interface Claim {
+  operatorId: string;
+  since: number;
 }
 
 /** What each person tells the others about themselves. */
@@ -71,10 +87,12 @@ export interface RoomState {
   saveProblem?: string;
   /** The other people in the room. */
   collaborators: Collaborator[];
+  /** This person, as the others see them. Undefined outside the room. */
+  me?: Collaborator;
 }
 
 const presenceColors = 6;
-const outside: RoomState = { entry: "entering", offline: false, save: "saved", collaborators: [] };
+const outside: RoomState = { entry: "entering", offline: false, save: "saved", collaborators: [], me: undefined };
 
 export class WorkflowRoom {
   private readonly document: WorkflowDocument;
@@ -84,6 +102,13 @@ export class WorkflowRoom {
   /** The connection to the room, while this person is in it. */
   private provider: HocuspocusProvider | undefined;
   private current = outside;
+  /** What this person is editing, kept to be told again each time the service lets them back in. */
+  private editing: Claim | undefined;
+  /**
+   * Where the clock of this person's presence stood when they last left the room. The room takes in only what is
+   * newer by that clock than what it heard of them last, so entering again goes on from here.
+   */
+  private presenceClock: number | undefined;
 
   constructor(document: WorkflowDocument, workflowId: number, userName: string) {
     this.document = document;
@@ -107,12 +132,26 @@ export class WorkflowRoom {
       // which filling of the room the document is of, so that it is not brought together with another.
       token: () =>
         JSON.stringify({ token: getSession()?.token ?? "", lineage: lineageOf(this.document.doc) } satisfies Entry),
-      onConnect: hear(() => ({ offline: false })),
-      onDisconnect: hear(() => ({ offline: true })),
+      onConnect: hear(() => {
+        this.forgetTheAbsent();
+        return { offline: false };
+      }),
+      onDisconnect: hear(() => {
+        // A connection that comes back tells where this person is before the service says what they may do there:
+        // what they edit is told again once it has.
+        this.awareness?.setLocalStateField("editing", undefined);
+        return { offline: true };
+      }),
+      // What this person edits is told from the moment the service lets them in, as begun then: after the connection
+      // was away, whoever opened it meanwhile keeps it.
+      onAuthenticated: () => {
+        if (this.editing) this.editing = { ...this.editing, since: Date.now() };
+        this.tellEditing();
+      },
       onSynced: hear(() => ({ entry: "entered" })),
       onAuthenticationFailed: ({ reason }) =>
         hear(() => ({ entry: reason === roomRefilled ? ("outdated" as const) : ("refused" as const) }))(),
-      onAwarenessChange: hear(() => ({ collaborators: this.others() })),
+      onAwarenessChange: hear(() => ({ collaborators: this.others(), me: this.me() })),
       onStateless: ({ payload }) => {
         const notice = JSON.parse(payload) as SaveNotice;
         hear(() => {
@@ -124,6 +163,9 @@ export class WorkflowRoom {
       },
     });
     this.provider = provider;
+    if (this.presenceClock !== undefined) {
+      provider.awareness?.meta.set(this.document.doc.clientID, { clock: this.presenceClock, lastUpdated: Date.now() });
+    }
     const color = `var(--presence-${colorOf(this.document.doc.clientID)})`;
     provider.awareness?.setLocalState({
       user: { name: this.userName, color, colorLight: `color-mix(in oklab, ${color} 30%, transparent)` },
@@ -136,6 +178,7 @@ export class WorkflowRoom {
   leave(): void {
     this.document.doc.off("update", this.unsaved);
     this.provider?.destroy();
+    this.presenceClock = this.provider?.awareness?.meta.get(this.document.doc.clientID)?.clock ?? this.presenceClock;
     this.provider = undefined;
     this.set(outside);
   }
@@ -176,15 +219,60 @@ export class WorkflowRoom {
     this.awareness?.setLocalStateField("code", operatorId);
   }
 
+  /**
+   * Tells the others which operator's settings this person is editing in its card, or that they have closed it:
+   * whoever began first holds it, and the others do not open it meanwhile (holds.ts). It is for a card opened to
+   * change the workflow, never for one opened only to look, as at a version or on a workflow this person may only
+   * look at. Of its own, the room tells nothing while the service lets this person only look, as once their access
+   * was lowered. The moment they began stays while they edit the same operator; told again after the connection was
+   * away, it begins anew, so whoever opened the card meanwhile keeps it.
+   */
+  edit(operatorId: string | undefined): void {
+    if (operatorId !== this.editing?.operatorId) {
+      this.editing = operatorId === undefined ? undefined : { operatorId, since: Date.now() };
+    }
+    this.tellEditing();
+  }
+
+  /** Tells what this person is editing while the service lets them change the workflow, and nothing otherwise. */
+  private tellEditing(): void {
+    this.awareness?.setLocalStateField("editing", this.mayChange ? this.editing : undefined);
+  }
+
+  /** Whether the connection is up, and the service lets this person change the workflow over it. */
+  private get mayChange(): boolean {
+    return (
+      !this.current.offline && this.provider?.isAuthenticated === true && this.provider.authorizedScope === "read-write"
+    );
+  }
+
+  /**
+   * Forgets the others whom this person no longer sees, clocks and all. Coming back after the connection was away,
+   * this person is told again what the others told before, which by the clocks remembered would be taken for old.
+   */
+  private forgetTheAbsent(): void {
+    const awareness = this.awareness;
+    if (!awareness) return;
+    for (const clientId of [...awareness.meta.keys()]) {
+      if (clientId !== this.document.doc.clientID && !awareness.getStates().has(clientId)) {
+        awareness.meta.delete(clientId);
+      }
+    }
+  }
+
   private others(): Collaborator[] {
     const self = this.document.doc.clientID;
     return [...(this.awareness?.getStates() ?? [])]
       .filter(([clientId, presence]) => clientId !== self && "user" in presence)
-      .map(([clientId, presence]) => {
-        const { user, ...where } = presence as Presence;
-        return { clientId, name: user.name, color: colorOf(clientId), ...where };
-      })
+      .map(([clientId, presence]) => collaboratorOf(clientId, presence as Presence))
       .toSorted((a, b) => a.clientId - b.clientId);
+  }
+
+  private me(): Collaborator | undefined {
+    const presence = this.awareness?.getLocalState();
+    return presence && "user" in presence
+      ? collaboratorOf(this.document.doc.clientID, presence as Presence)
+      : undefined;
   }
 
   /** Whatever changes once the workflow is here is not saved until the service says so. */
@@ -196,6 +284,11 @@ export class WorkflowRoom {
     this.current = { ...this.current, ...change };
     for (const listener of this.listeners) listener();
   }
+}
+
+/** Someone in the room, from what they tell the others. */
+function collaboratorOf(clientId: number, { user, ...where }: Presence): Collaborator {
+  return { clientId, name: user.name, color: colorOf(clientId), ...where };
 }
 
 /** The color someone is shown in follows from their id, so that everyone sees them in the same one. */

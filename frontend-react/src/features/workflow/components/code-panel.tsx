@@ -26,6 +26,8 @@ import { CodeEditor } from "./code-editor";
 
 export interface CodePanelProps {
   operator: Operator;
+  /** The name the operator goes by. */
+  name: string;
   /** The operator's code, as text shared with whoever else has it open. */
   text: Text;
   language: CodeLanguage;
@@ -35,14 +37,15 @@ export interface CodePanelProps {
 }
 
 /**
- * The code of the operator that is selected, to read or to write, together with whoever else has it open, and with
- * the help of the language's server. It is loaded on its own, when someone first opens an operator's code.
+ * The code of an operator, opened from this user's card or by the person they follow, to read or to write, together
+ * with whoever else has it open, and with the help of the language's server. It is loaded on its own, when someone
+ * first opens an operator's code.
  */
-export function CodePanel({ operator, text, language, awareness, readOnly }: CodePanelProps) {
+export function CodePanel({ operator, name, text, language, awareness, readOnly }: CodePanelProps) {
   const help = useLanguageHelp(language, operator.operatorID);
   return (
     <CodeEditor
-      label={`Code of ${operator.customDisplayName ?? operator.operatorID}`}
+      label={`Code of ${name}`}
       text={text}
       language={language}
       awareness={awareness}

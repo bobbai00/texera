@@ -59,6 +59,8 @@
   --color-presence-6: var(--presence-6);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-kind-dataset: var(--kind-dataset);
+  --color-kind-model: var(--kind-model);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);

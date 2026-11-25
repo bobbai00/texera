@@ -18,7 +18,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { formatBytes, formatDate, formatDuration, formatSpan, formatTime, formatTimeOfDay } from "./format";
+import { formatBytes, formatDate, formatDuration, formatRows, formatSpan, formatTime, formatTimeOfDay } from "./format";
 
 describe("formatBytes", () => {
   it.each([
@@ -97,5 +97,37 @@ describe("formatDuration", () => {
 
   it.each([-1, Number.NaN])("shows %d milliseconds as an unknown time", ms => {
     expect(formatDuration(ms)).toBe("Unknown time");
+  });
+});
+
+describe("formatRows", () => {
+  it.each([
+    [0, "0 rows"],
+    [1, "1 row"],
+    [150, "150 rows"],
+    [1_234_567, "1,234,567 rows"],
+  ])("shows a count of %d as %s", (rows, text) => {
+    expect(formatRows(rows)).toBe(text);
+  });
+
+  it.each([
+    [{ inputRows: 5265, outputRows: 3 }, "5,265 → 3 rows"],
+    [{ inputRows: 3, outputRows: 1 }, "3 → 1 row"],
+    [{ inputRows: 2, outputRows: 0 }, "2 → 0 rows"],
+    [{ inputRows: 0, outputRows: 150 }, "150 rows"],
+    [{ inputRows: 0, outputRows: 1 }, "1 row"],
+  ])("shows the rows an operator took and put out, %j, as %s, and a source's as those it put out", (rows, text) => {
+    expect(formatRows(rows)).toBe(text);
+  });
+
+  it.each<Parameters<typeof formatRows>[0]>([
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    { inputRows: Number.NaN, outputRows: 3 },
+    { inputRows: 3, outputRows: -1 },
+  ])("shows %j as an unknown number of rows", rows => {
+    expect(formatRows(rows)).toBe("Unknown number of rows");
   });
 });

@@ -31,19 +31,19 @@ test("an execution is shared: whoever has the workflow open watches it, and whoe
   await (await editor.select("Text Input")).getByLabel("Text *").fill("ada\ngrace\nlinus");
   await editor.addOperator("Limit");
   await editor.link("Text Input", "Limit");
-  const limit = await editor.select("Limit");
-  await limit.getByLabel("Limit *").fill("2");
-  await limit.getByRole("checkbox", { name: "Keep its result for viewing" }).check();
+  await (await editor.select("Limit")).getByLabel("Limit *").fill("2");
+  await editor.keepResult("Limit");
   await secondEditor.open(workflow);
   await expect(secondEditor.operator("Limit")).toBeVisible();
 
   await editor.execute();
 
-  // The second browser did not start the execution, and shows it all the same: each operator, and the result.
+  // The second browser did not start the execution, and shows it all the same: each operator, and the result, which
+  // the chip under the operator's card shows.
   await expect(secondEditor.executionState).toHaveText("Completed");
-  await expect(secondEditor.operator("Text Input")).toContainText("Completed · 3 rows");
-  await expect(secondEditor.operator("Limit")).toContainText("Completed · 2 rows");
-  await secondEditor.select("Limit");
+  await expect(secondEditor.operator("Text Input")).toContainText(/Completed.*3 rows/);
+  await expect(secondEditor.operator("Limit")).toContainText(/Completed.*→ 2 rows/);
+  await secondEditor.resultChip("Limit", "2 rows").click();
   await expect(secondEditor.resultCell("ada")).toBeVisible();
   await expect(secondEditor.resultCell("grace")).toBeVisible();
   await expect(secondEditor.resultCell("linus")).toBeHidden();
@@ -51,10 +51,10 @@ test("an execution is shared: whoever has the workflow open watches it, and whoe
   // Opening the workflow after the execution has ended shows how it ended.
   await secondEditor.page.reload();
   await expect(secondEditor.executionState).toHaveText("Completed");
-  await expect(secondEditor.operator("Limit")).toContainText("Completed · 2 rows");
+  await expect(secondEditor.operator("Limit")).toContainText(/Completed.*→ 2 rows/);
 
   // An execution started in the second browser is the first one's too.
   await secondEditor.execute();
   await expect(editor.executionState).toHaveText("Completed");
-  await expect(editor.operator("Limit")).toContainText("Completed · 2 rows");
+  await expect(editor.operator("Limit")).toContainText(/Completed.*→ 2 rows/);
 });

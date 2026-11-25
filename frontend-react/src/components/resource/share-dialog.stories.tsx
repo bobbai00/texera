@@ -21,17 +21,21 @@ import type { Decorator, Meta, StoryObj } from "@storybook/react-vite";
 import { useQueryClient } from "@tanstack/react-query";
 import { expect, fn, screen, within } from "storybook/test";
 import { Button } from "@/components/ui/button";
-import { ownerQuery, type SharedWith, sharedWithQuery } from "./api";
+import { ownerQuery, type SharedWith, sharedWithQuery, visibilityQuery } from "./api";
 import { ShareDialog } from "./share-dialog";
 
 const iris = { kind: "dataset", id: 12, name: "iris" } as const;
 
-/** Puts the owner and the people the dialog loads in the story's cache, so the story calls no server. */
+/**
+ * Puts the owner, the people and whether the dataset is public, which the dialog loads, in the story's cache, so the
+ * story calls no server.
+ */
 function withAccess(owner: string, people: SharedWith[]): Decorator {
   return Story => {
     const queryClient = useQueryClient();
     queryClient.setQueryData(ownerQuery(iris).queryKey, owner);
     queryClient.setQueryData(sharedWithQuery(iris).queryKey, people);
+    queryClient.setQueryData(visibilityQuery(iris).queryKey, false);
     return <Story />;
   };
 }

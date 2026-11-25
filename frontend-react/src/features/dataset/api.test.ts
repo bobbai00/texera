@@ -20,20 +20,13 @@
 import { QueryClient } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw/http";
 import { beforeEach, describe, expect, it } from "vitest";
+import { versionListQuery } from "@/components/resource/api";
 import { admin, reader } from "@/testing/fixtures";
 import { db } from "@/testing/mock-api";
 import { addDataset } from "@/testing/mock-api/dataset";
 import { server } from "@/testing/server";
 import { signInAs } from "@/testing/session";
-import {
-  createDataset,
-  createVersion,
-  datasetDeletion,
-  datasetQuery,
-  fileTreeQuery,
-  uploadFile,
-  versionListQuery,
-} from "./api";
+import { createDataset, createVersion, datasetDeletion, datasetQuery, fileTreeQuery, uploadFile } from "./api";
 
 const mebibyte = 1024 * 1024;
 
@@ -80,7 +73,7 @@ describe("the dataset queries", () => {
       createdAt: Date.UTC(2026, 10, 12, 12),
       access: "owner",
     });
-    expect(await queryClient.fetchQuery(versionListQuery(did))).toEqual([
+    expect(await queryClient.fetchQuery(versionListQuery({ kind: "dataset", id: did }))).toEqual([
       { id: versions[1].dvid, name: "v2 - add notes", createdAt: versions[1].creationTime },
       { id: versions[0].dvid, name: "v1", createdAt: versions[0].creationTime },
     ]);

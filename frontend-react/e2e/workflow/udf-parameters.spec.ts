@@ -55,7 +55,7 @@ test("user declares a parameter of a Python UDF, gives it a value, and the engin
   await form.getByRole("textbox", { name: "Name" }).fill("greeting");
   await form.getByRole("button", { name: "Declare it in the code" }).click();
   await udf.getByRole("textbox", { name: "greeting string" }).fill("hello");
-  await udf.getByRole("checkbox", { name: "Keep its result for viewing" }).check();
+  await editor.keepResult("Python UDF");
 
   await editor.execute();
 

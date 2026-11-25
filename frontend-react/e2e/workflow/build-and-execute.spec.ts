@@ -45,7 +45,7 @@ test("user builds a workflow, is offered each operator's input columns, and exec
   await editor.choose(attribute, "line");
   await editor.choose(predicate.getByRole("combobox", { name: "Condition *" }), "!=");
   await predicate.getByLabel("Value").fill("linus");
-  await filter.getByRole("checkbox", { name: "Keep its result for viewing" }).check();
+  await editor.keepResult("Filter");
 
   // Renaming the column upstream reaches the filter: it is offered the new name, and told its own is gone.
   await (await editor.select("Text Input")).getByLabel("Attribute Name *").fill("name");
@@ -58,8 +58,10 @@ test("user builds a workflow, is offered each operator's input columns, and exec
 
   await editor.execute();
 
-  await expect(editor.operator("Text Input")).toContainText("Completed · 3 rows");
-  await expect(editor.operator("Filter")).toContainText("Completed · 2 rows");
+  // Each card says how its operator did: its state, then the rows it took and put out, or those a source put out.
+  await expect(editor.operator("Text Input")).toContainText(/Completed.*3 rows/);
+  await expect(editor.operator("Filter")).toContainText(/Completed.*3 → 2 rows/);
+  await expect(editor.resultChip("Filter", "2 rows")).toBeVisible();
   await expect(editor.resultCell("ada")).toBeVisible();
   await expect(editor.resultCell("grace")).toBeVisible();
   await expect(editor.resultCell("linus")).toBeHidden();

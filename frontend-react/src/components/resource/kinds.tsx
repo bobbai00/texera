@@ -22,8 +22,22 @@ import { BoxIcon, DatabaseIcon, type LucideIcon, ServerIcon, WorkflowIcon } from
 import type { PageTarget } from "@/components/layout/page-link";
 import type { ResourceKind, ResourceRef } from "@/lib/resource";
 
+/**
+ * The classes that draw something in a kind's own color, written out in full so that the build finds each. Its text
+ * reads on a card, a popover and a chip under the pointer, and its edge shows against a card, the canvas and a chip
+ * under the pointer, in both themes (kinds.test.ts).
+ */
+export interface KindTone {
+  /** Text and icons in the kind's color. */
+  text: string;
+  /** An edge in the kind's color, such as a chip's. */
+  border: string;
+}
+
 /** What the app needs to know about a kind of resource to name it, draw it, and link to it. */
 export interface ResourceKindInfo {
+  /** What one resource of the kind is called, such as "Dataset". */
+  singular: string;
   /** The name of the kind's list, and of its place in the navigation. */
   plural: string;
   icon: LucideIcon;
@@ -31,8 +45,15 @@ export interface ResourceKindInfo {
   listPage: PageTarget;
   /** The page of one resource of the kind, for a kind whose resources have one. */
   page?: (id: number) => PageTarget;
+  /**
+   * The page of one resource of the kind at one of its versions, by the version's id, and showing a file of that
+   * version, for a kind whose pages show a version.
+   */
+  versionPage?: (id: number, version: number, file?: string) => PageTarget;
   /** Whether a resource of the kind can be public, for anyone to find in the hub and open. */
   canBePublic: boolean;
+  /** The kind's own color, for a kind whose resources operators read, which the canvas draws as chips. */
+  tone?: KindTone;
 }
 
 /**
@@ -41,6 +62,7 @@ export interface ResourceKindInfo {
  */
 export const resourceKinds = {
   workflow: {
+    singular: "Workflow",
     plural: "Workflows",
     icon: WorkflowIcon,
     listPage: linkOptions({ to: "/workflows" }),
@@ -48,20 +70,27 @@ export const resourceKinds = {
     canBePublic: true,
   },
   dataset: {
+    singular: "Dataset",
     plural: "Datasets",
     icon: DatabaseIcon,
     listPage: linkOptions({ to: "/datasets" }),
     page: id => linkOptions({ to: "/datasets/$datasetId", params: { datasetId: id } }),
+    versionPage: (id, version, file) =>
+      linkOptions({ to: "/datasets/$datasetId", params: { datasetId: id }, search: { version, file } }),
     canBePublic: true,
+    tone: { text: "text-kind-dataset", border: "border-kind-dataset" },
   },
   model: {
+    singular: "Model",
     plural: "Models",
     icon: BoxIcon,
     listPage: linkOptions({ to: "/models" }),
     page: id => ({ angularPath: `/user/model/${id}` }),
     canBePublic: true,
+    tone: { text: "text-kind-model", border: "border-kind-model" },
   },
   "computing-unit": {
+    singular: "Computing unit",
     plural: "Computing units",
     icon: ServerIcon,
     listPage: linkOptions({ to: "/computing-units" }),
