@@ -1,0 +1,85 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# A small Texera backend for the React app's end-to-end tests: the services of
+# bin/single-node that sign-in and datasets need, as their own Compose project.
+#
+# Use it on top of the single-node file, from the repository root:
+#   docker compose -f bin/single-node/docker-compose.yml -f frontend-react/e2e/stack/compose.yml \
+#     up -d --wait postgres rustfs lakefs file-service config-service dashboard-service nginx
+# (`yarn stack:up` and `yarn stack:down` in frontend-react/ run exactly this.)
+#
+# Relative paths resolve against bin/single-node/, the directory of the first file.
+# Every container gets its own name and the project its own network, so the stack
+# runs beside a bin/local-dev.sh or bin/single-node.sh stack on the same machine.
+name: texera-react
+networks:
+  default: { name: texera-react }
+services:
+  # Old container names that bin/single-node/.env uses as host names stay as aliases.
+  postgres: { container_name: texera-react-postgres, networks: { default: { aliases: [texera-postgres] } } }
+  rustfs:
+    container_name: texera-react-rustfs
+    networks: { default: { aliases: [texera-rustfs] } }
+    # The browser downloads files through presigned URLs that point here.
+    ports: !override ["127.0.0.1:${REACT_S3_PORT:-19000}:9000"]
+  lakefs:
+    container_name: texera-react-lakefs
+    networks: { default: { aliases: [texera-lakefs] } }
+    environment: { LAKEFS_BLOCKSTORE_S3_PRE_SIGNED_ENDPOINT: "${TEXERA_HOST}:${REACT_S3_PORT:-19000}" }
+  lakekeeper: { container_name: texera-react-lakekeeper, networks: { default: { aliases: [texera-lakekeeper] } } }
+  jupyter: { container_name: texera-react-jupyter, networks: { default: { aliases: [texera-jupyter] } }, ports: !reset [] }
+  dashboard-service:
+    container_name: texera-react-dashboard-service
+    # The base file also waits for the compiling and execution services, which datasets do not need.
+    depends_on: !override { postgres: { condition: service_healthy } }
+  nginx:
+    container_name: texera-react-nginx
+    ports: !override ["127.0.0.1:${REACT_GATEWAY_PORT:-18080}:8080"]
+    depends_on: !override
+      dashboard-service: { condition: service_healthy }
+      file-service: { condition: service_healthy }
+      config-service: { condition: service_healthy }
+    volumes: !override
+      - ../../frontend-react/e2e/stack/nginx.conf:/etc/nginx/nginx.conf:ro
+      # The React app is served at /alpha/ from its build output, frontend-react/dist.
+      - { type: bind, source: ../../frontend-react, target: /srv/frontend-react, read_only: true, bind: { create_host_path: false } }
+  file-service: { container_name: texera-react-file-service }
+  # Built from frontend-react/; it opens and saves workflows as each person, through the Dashboard Service.
+  shared-editing-service:
+    container_name: texera-react-shared-editing-service
+    build: { context: ../../frontend-react, dockerfile: shared-editing-service/Dockerfile }
+    environment: { TEXERA_GATEWAY: "http://dashboard-service:8080" }
+  config-service: { container_name: texera-react-config-service }
+  rustfs-init: { container_name: texera-react-rustfs-init }
+  lakekeeper-migrate: { container_name: texera-react-lakekeeper-migrate }
+  lakekeeper-init: { container_name: texera-react-lakekeeper-init }
+  access-control-service: { container_name: texera-react-access-control-service }
+  workflow-computing-unit-managing-service: { container_name: texera-react-workflow-computing-unit-managing-service }
+  workflow-compiling-service: { container_name: texera-react-workflow-compiling-service }
+  workflow-runtime-coordinator-service: { container_name: texera-react-workflow-runtime-coordinator-service }
+  litellm: { container_name: texera-react-litellm }
+  agent-service: { container_name: texera-react-agent-service }
+  notebook-migration-service: { container_name: texera-react-notebook-migration-service }
+  otel-collector: { container_name: texera-react-otel-collector }
+  loki: { container_name: texera-react-loki, ports: !reset [] }
+  grafana: { container_name: texera-react-grafana, ports: !reset [] }
+  victoriametrics-init: { container_name: texera-react-victoriametrics-init }
+  victoriametrics: { container_name: texera-react-victoriametrics, ports: !reset [] }
+  jaeger: { container_name: texera-react-jaeger, ports: !reset [] }
+  parca: { container_name: texera-react-parca, ports: !reset [] }
+  parca-agent: { container_name: texera-react-parca-agent }

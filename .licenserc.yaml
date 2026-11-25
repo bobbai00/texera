@@ -41,6 +41,7 @@ header:
     - '.gitignore'
     - '.licenserc.yaml'
     - 'frontend/.yarn/**'
+    - 'frontend-react/.yarn/**'
     - 'amber/src/main/python/proto/**'
     - '**/.env.example'
     - '**/.prettierrc'
@@ -57,6 +58,8 @@ header:
     - 'frontend/src/app/common/formly/object.type.ts'
     - 'frontend/src/app/common/formly/multischema.type.ts'
     - 'frontend/src/app/common/formly/null.type.ts'
+    # shadcn/ui components, kept as its CLI generates them (MIT License) - see LICENSE file for attribution
+    - 'frontend-react/src/components/ui/**'
     # Apple trademark artwork, required by Apple for the Sign in with Apple button. An ASF header
     # here would assert Apache-2.0 over Apple's mark, which is why it is ignored rather than
     # headed - see LICENSE file for attribution.

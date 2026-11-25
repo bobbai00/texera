@@ -1,0 +1,48 @@
+{
+  "_about": "A workflow's saved content and its version list as a Texera backend answered them (GET /workflow/{wid}, GET /version/{wid}): an empty workflow, then Text Input, Limit, two copies of Limit, a copy of Text Input, and a comment, one save each.",
+  "content": "{\"operators\":[{\"operatorID\":\"Limit-operator-162dc7e6-9f7e-4d39-911f-8442b8935a8d\",\"operatorType\":\"Limit\",\"operatorVersion\":\"N/A\",\"inputPorts\":[{\"portID\":\"input-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"outputPorts\":[{\"portID\":\"output-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"dynamicInputPorts\":false,\"dynamicOutputPorts\":false,\"showAdvanced\":false,\"isDisabled\":false,\"customDisplayName\":\"Limit\",\"operatorProperties\":{}},{\"operatorID\":\"Limit-operator-626fbf60-73b5-4599-b902-12cf196c60a2\",\"operatorType\":\"Limit\",\"operatorVersion\":\"N/A\",\"inputPorts\":[{\"portID\":\"input-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"outputPorts\":[{\"portID\":\"output-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"dynamicInputPorts\":false,\"dynamicOutputPorts\":false,\"showAdvanced\":false,\"isDisabled\":false,\"customDisplayName\":\"Limit\",\"operatorProperties\":{}},{\"operatorID\":\"Limit-operator-c545ff50-f711-4a22-8c69-a75d8e4e9be7\",\"operatorType\":\"Limit\",\"operatorVersion\":\"N/A\",\"inputPorts\":[{\"portID\":\"input-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"outputPorts\":[{\"portID\":\"output-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"dynamicInputPorts\":false,\"dynamicOutputPorts\":false,\"showAdvanced\":false,\"isDisabled\":false,\"customDisplayName\":\"Limit\",\"operatorProperties\":{}},{\"operatorID\":\"TextInput-operator-5e43e84e-0357-4fbf-87a3-158cbaa280a1\",\"operatorType\":\"TextInput\",\"operatorVersion\":\"N/A\",\"inputPorts\":[],\"outputPorts\":[{\"portID\":\"output-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"dynamicInputPorts\":false,\"dynamicOutputPorts\":false,\"showAdvanced\":false,\"isDisabled\":false,\"customDisplayName\":\"Text Input\",\"operatorProperties\":{\"attributeType\":\"string\",\"attributeName\":\"line\"}},{\"operatorID\":\"TextInput-operator-9a9fd942-54a6-4f44-acac-ec45c3cfa926\",\"operatorType\":\"TextInput\",\"operatorVersion\":\"N/A\",\"inputPorts\":[],\"outputPorts\":[{\"portID\":\"output-0\",\"displayName\":\"\",\"disallowMultiInputs\":false,\"isDynamicPort\":false}],\"dynamicInputPorts\":false,\"dynamicOutputPorts\":false,\"showAdvanced\":false,\"isDisabled\":false,\"customDisplayName\":\"Text Input\",\"operatorProperties\":{\"attributeType\":\"string\",\"attributeName\":\"line\"}}],\"operatorPositions\":{\"TextInput-operator-5e43e84e-0357-4fbf-87a3-158cbaa280a1\":{\"x\":0,\"y\":0},\"Limit-operator-162dc7e6-9f7e-4d39-911f-8442b8935a8d\":{\"x\":304,\"y\":0},\"Limit-operator-c545ff50-f711-4a22-8c69-a75d8e4e9be7\":{\"x\":344,\"y\":40},\"Limit-operator-626fbf60-73b5-4599-b902-12cf196c60a2\":{\"x\":384,\"y\":80},\"TextInput-operator-9a9fd942-54a6-4f44-acac-ec45c3cfa926\":{\"x\":40,\"y\":40}},\"links\":[],\"commentBoxes\":[{\"commentBoxID\":\"commentBox-90595311-e06a-422d-a32b-391f4c16b7ba\",\"commentBoxPosition\":{\"x\":200,\"y\":500},\"comments\":[{\"content\":\"Text Input needs the penguin rows pasted in.\",\"creationTime\":\"2026-11-18T18:10:28.112Z\",\"creatorName\":\"texera\",\"creatorID\":1}]}],\"settings\":{\"dataTransferBatchSize\":400}}",
+  "versions": [
+    {
+      "vId": 681,
+      "creationTime": 1795025429635,
+      "content": "[{\"op\":\"remove\",\"path\":\"/commentBoxes/0\"}]",
+      "importance": true
+    },
+    {
+      "vId": 680,
+      "creationTime": 1795025183723,
+      "content": "[{\"op\":\"remove\",\"path\":\"/operators/4\"},{\"op\":\"remove\",\"path\":\"/operatorPositions/TextInput-operator-9a9fd942-54a6-4f44-acac-ec45c3cfa926\"}]",
+      "importance": false
+    },
+    {
+      "vId": 679,
+      "creationTime": 1795025158888,
+      "content": "[{\"op\":\"remove\",\"path\":\"/operators/1\"},{\"op\":\"remove\",\"path\":\"/operatorPositions/Limit-operator-626fbf60-73b5-4599-b902-12cf196c60a2\"}]",
+      "importance": false
+    },
+    {
+      "vId": 678,
+      "creationTime": 1795025130399,
+      "content": "[{\"op\":\"remove\",\"path\":\"/operators/1\"},{\"op\":\"remove\",\"path\":\"/operatorPositions/Limit-operator-c545ff50-f711-4a22-8c69-a75d8e4e9be7\"}]",
+      "importance": false
+    },
+    {
+      "vId": 677,
+      "creationTime": 1795025117194,
+      "content": "[{\"op\":\"remove\",\"path\":\"/operators/0\"},{\"op\":\"remove\",\"path\":\"/operatorPositions/Limit-operator-162dc7e6-9f7e-4d39-911f-8442b8935a8d\"}]",
+      "importance": false
+    },
+    {
+      "vId": 676,
+      "creationTime": 1795025112735,
+      "content": "[{\"op\":\"remove\",\"path\":\"/operators/0\"},{\"op\":\"remove\",\"path\":\"/operatorPositions/TextInput-operator-5e43e84e-0357-4fbf-87a3-158cbaa280a1\"}]",
+      "importance": false
+    },
+    {
+      "vId": 675,
+      "creationTime": 1795025097271,
+      "content": "[{\"op\":\"remove\",\"path\":\"/operators\"},{\"op\":\"remove\",\"path\":\"/operatorPositions\"},{\"op\":\"remove\",\"path\":\"/links\"},{\"op\":\"remove\",\"path\":\"/commentBoxes\"},{\"op\":\"remove\",\"path\":\"/settings\"}]",
+      "importance": false
+    }
+  ]
+}
