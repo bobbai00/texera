@@ -58,9 +58,10 @@ test("user builds a workflow, is offered each operator's input columns, and exec
 
   await editor.execute();
 
-  // Each card says how its operator did: its state, then the rows it took and put out, or those a source put out.
-  await expect(editor.operator("Text Input")).toContainText(/Completed.*3 rows/);
-  await expect(editor.operator("Filter")).toContainText(/Completed.*3 → 2 rows/);
+  // Each card says how its operator did: its state, then the rows it took and put out, or those a source put out,
+  // side by side in its text.
+  await expect(editor.operator("Text Input")).toContainText(/Completed3 rows/);
+  await expect(editor.operator("Filter")).toContainText(/Completed3 → 2 rows/);
   await expect(editor.resultChip("Filter", "2 rows")).toBeVisible();
   await expect(editor.resultCell("ada")).toBeVisible();
   await expect(editor.resultCell("grace")).toBeVisible();

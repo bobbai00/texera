@@ -193,8 +193,12 @@ export class WorkflowEditor {
     return { x: Math.round(box.width / 2), y: 24 };
   }
 
-  /** Opens the canvas's menu on an operator, or on an empty spot of the canvas, and returns it. */
+  /**
+   * Opens the canvas's menu on an operator, or on an empty spot of the canvas, and returns it. A right click in an
+   * open card is the browser's, as in any field, so the operator's card is closed first if it is open.
+   */
   async openMenu(on?: string): Promise<Locator> {
+    if (on && (await this.properties(on).isVisible())) await this.closeCard(on);
     if (on) await this.operator(on).click({ button: "right" });
     else await this.canvas.click({ button: "right", position: await this.emptySpot() });
     const menu = this.page.getByRole("menu");

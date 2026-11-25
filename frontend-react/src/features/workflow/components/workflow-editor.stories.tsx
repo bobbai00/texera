@@ -85,7 +85,7 @@ const meta = {
     // Each story starts with the editor's panels and the viewer's choices as the browser has never seen them, and
     // with nothing asked yet.
     localStorage.clear();
-    recordRequests();
+    return recordRequests();
   },
   // The editor works on its own document here: it asks the backend nothing, and draws no text under 12px.
   afterEach: async () => {
@@ -153,6 +153,11 @@ function lineInside(line: SVGPathElement, box: DOMRect): { inside: number; drawn
  */
 export const RoomForTheOpenCard: Story = {
   args: {
+    // The limit keeps its result after each execution, and kept it in the one shown.
+    content: {
+      ...penguins,
+      operators: penguins.operators.map(each => (each.operatorID === "limit" ? { ...each, viewResult: true } : each)),
+    },
     progress: {
       scan: { state: "Completed", inputRows: 0, outputRows: 344 },
       limit: { state: "Completed", inputRows: 344, outputRows: 5 },
@@ -162,7 +167,11 @@ export const RoomForTheOpenCard: Story = {
   },
   play: async ({ canvasElement }) => {
     const apart = below(await drawnCanvas(canvasElement), "Limit", "Sort");
-    await openCard(await drawnCanvas(canvasElement), "Limit");
+    const properties = await openCard(await drawnCanvas(canvasElement), "Limit");
+    await expect(within(properties).getByRole("button", { name: "Keep the result of Limit" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
     // Once the open card is measured, the canvas draws the cards under it again, and slides it into view.
     const flow = await drawnCanvas(canvasElement);
     const [limit, sort] = [cardOf(flow, "Limit").getBoundingClientRect(), cardOf(flow, "Sort").getBoundingClientRect()];

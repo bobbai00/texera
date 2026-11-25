@@ -68,7 +68,7 @@ test("user picks a file of a dataset for an operator to read, and executes it", 
 
   await editor.execute();
 
-  await expect(editor.operator("CSV File Scan")).toContainText(/Completed.*2 rows/);
+  await expect(editor.operator("CSV File Scan")).toContainText(/Completed2 rows/);
   await editor.select("Projection");
   await expect(editor.resultCell("setosa")).toBeVisible();
   await expect(editor.resultCell("virginica")).toBeHidden();

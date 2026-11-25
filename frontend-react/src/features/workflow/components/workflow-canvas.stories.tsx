@@ -23,7 +23,7 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { type Model, resourceLookupQuery, type VersionedKind, versionListQuery } from "@/components/resource/api";
 import type { OperatorProgress } from "@/lib/execution/client";
 import type { Resource, ResourceVersion } from "@/lib/resource";
-import { operatorCard, resourceChip, resultChip } from "@/lib/workflow/canvas-geometry";
+import { operatorCard, operatorSpacing, resourceChip, resultChip } from "@/lib/workflow/canvas-geometry";
 import type { Collaborator } from "@/lib/workflow/room";
 import { backendRequests, cardOf, drawnCanvas, recordRequests, smallText } from "@/testing/stories";
 import { spokenText } from "@/testing/text";
@@ -82,6 +82,40 @@ function overlap(a: DOMRect, b: DOMRect): boolean {
   );
 }
 
+/**
+ * The label on a card that says who is editing it, once it is checked that both what it says, their name and what
+ * they do, are seen: its words for a screen reader say the same, and are not seen.
+ */
+async function editingLabel(card: HTMLElement, name: string): Promise<HTMLElement> {
+  const [who, doing] = [within(card).getByText(name), within(card).getByText("is editing")];
+  await expect(who).toBeVisible();
+  await expect(doing).toBeVisible();
+  await expect(doing.parentElement).toBe(who.parentElement);
+  return who.parentElement!;
+}
+
+/** The path a line on the canvas is drawn with, by the line's id. */
+function lineOf(flow: HTMLElement, id: string): SVGPathElement {
+  const line = flow.querySelector<SVGPathElement>(`.react-flow__edge[data-id="${id}"] path`);
+  if (!line) throw new Error(`No line ${id} is drawn.`);
+  return line;
+}
+
+/**
+ * Checks that the lines of chips are drawn dashed, in the color of the links between operators, and without the arrow
+ * that a link has: a chip is no step of the workflow.
+ */
+async function chipLines(flow: HTMLElement, link: string, lines: string[]) {
+  const linked = lineOf(flow, link);
+  await expect(linked).toHaveAttribute("marker-end");
+  for (const id of lines) {
+    const line = lineOf(flow, id);
+    await expect(getComputedStyle(line).strokeDasharray).toBe("4px, 4px");
+    await expect(getComputedStyle(line).stroke).toBe(getComputedStyle(linked).stroke);
+    await expect(line).not.toHaveAttribute("marker-end");
+  }
+}
+
 const meta = {
   component: WorkflowCanvas,
   args: { content: penguins, schemas },
@@ -95,7 +129,7 @@ const meta = {
   beforeEach: () => {
     // Each story starts with the viewer's choices as the browser has never seen them, and with nothing asked yet.
     localStorage.clear();
-    recordRequests();
+    return recordRequests();
   },
   // A canvas is drawn from what it is given: it asks the backend nothing, and draws no text under 12px.
   afterEach: async () => {
@@ -161,9 +195,13 @@ export const OnlyLookedAt: Story = {
   },
 };
 
-/** Every setting on a line of its own, by its name, as the viewer may choose for every canvas. */
+/**
+ * Every setting on a line of its own, by its name, as the viewer may choose for every canvas. Each card is as tall as
+ * its settings make it, and all the rows are drawn further apart, as far as the tallest card needs, with the chip of a
+ * version above a card.
+ */
 export const EverySetting: Story = {
-  args: { density: "detailed" },
+  args: { content: sorted, density: "detailed" },
   play: async ({ canvasElement }) => {
     const flow = await drawnCanvas(canvasElement);
     const settingsOf = (name: string) =>
@@ -176,8 +214,15 @@ export const EverySetting: Story = {
       ["Limit", "10"],
     ]);
     await expect(settingsOf("Filter")).toEqual([["Predicates", "mass > 3600"]]);
-    // Each card is as tall as its settings make it, and the rows are drawn further apart for the tallest.
-    await expect(cardOf(flow, "CSV File Scan").getBoundingClientRect().height).toBeGreaterThan(operatorCard.height);
+    const firstRow = ["CSV File Scan", "Filter", "Limit"].map(name => cardOf(flow, name).getBoundingClientRect());
+    const [scan, sort] = [firstRow[0], cardOf(flow, "Sort").getBoundingClientRect()];
+    await expect(scan.height).toBeGreaterThan(operatorCard.height);
+    // The sort, in the second row, is further under the first row than arranging puts it: so far that a chip, which a
+    // card there may have above it, has its room between the tallest card of the first row and it.
+    await expect(sort.top - scan.top).toBeGreaterThan(operatorSpacing.row);
+    await expect(sort.top - Math.max(...firstRow.map(card => card.bottom))).toBeGreaterThanOrEqual(
+      resourceChip.height + resourceChip.gap
+    );
   },
 };
 
@@ -216,7 +261,10 @@ export const Executing: Story = {
   },
 };
 
-/** An execution that failed at the filter: the operators after it never started. */
+/**
+ * An execution that failed at the filter: its card's edge is in the color of failure, as its state's icon is, and the
+ * operators after it never started.
+ */
 export const Failed: Story = {
   args: {
     content: sorted,
@@ -227,10 +275,19 @@ export const Failed: Story = {
     },
   },
   play: async ({ canvasElement }) => {
-    const filter = cardOf(await drawnCanvas(canvasElement), "Filter");
+    const flow = await drawnCanvas(canvasElement);
+    const filter = cardOf(flow, "Filter");
+    const state = within(filter).getByText("Failed");
 
-    await expect(within(filter).getByText("Failed")).toBeVisible();
+    await expect(state).toBeVisible();
     await expect(within(filter).getByText("5,265 → 0 rows")).toBeVisible();
+    const failure = getComputedStyle(state.parentElement!.querySelector("svg")!).color;
+    await expect(getComputedStyle(surfaceOf(filter)).borderTopColor).toBe(failure);
+    for (const name of ["Limit", "Sort"]) {
+      const after = cardOf(flow, name);
+      await expect(within(after).getByText("Uninitialized")).toBeVisible();
+      await expect(getComputedStyle(surfaceOf(after)).borderTopColor).not.toBe(failure);
+    }
   },
 };
 
@@ -289,9 +346,8 @@ export const HeldBySomeoneElse: Story = {
   },
   play: async ({ canvasElement, args }) => {
     const filter = cardOf(await drawnCanvas(canvasElement), "Filter");
-    const holder = within(filter).getByText("Grace").parentElement!;
+    const holder = await editingLabel(filter, "Grace");
 
-    await expect(holder).toHaveTextContent("Grace is editing");
     await expect(within(filter).getByRole("list", { name: "Selected by" })).toHaveTextContent(/^Alan$/);
     await expect(getComputedStyle(surfaceOf(filter)).borderTopColor).toBe(getComputedStyle(holder).backgroundColor);
     // Its buttons show once it has the keyboard, as when it is pointed at.
@@ -405,8 +461,9 @@ const termsOf = (details: HTMLElement) =>
     .map(term => [term.textContent, spokenText(term.nextElementSibling!)]);
 
 /**
- * Above each card, a chip of each version of a dataset or a model its operator reads, centered on it and joined to it
- * by a dashed line, in the kind's color. A click opens what the backend says of it, and a link to its page.
+ * Above each card, a chip of each version of a dataset or a model its operator reads: centered on it, its edge in the
+ * kind's color, and joined to the card by a dashed line in the links' color, without an arrow. A click opens what the
+ * backend says of it, and a link to its page.
  */
 export const ReadingDatasetsAndModels: Story = {
   args: { content: reading },
@@ -434,6 +491,7 @@ export const ReadingDatasetsAndModels: Story = {
     }
     // Each kind in its own color.
     await expect(getComputedStyle(dataset).borderTopColor).not.toBe(getComputedStyle(model).borderTopColor);
+    await chipLines(flow, "scan->udf:0", ["scan:resource:0:line", "udf:resource:0:line"]);
 
     await userEvent.click(model);
     const aboutModel = await within(document.body).findByRole("dialog", { name: "resnet" });
@@ -462,8 +520,8 @@ export const ReadingDatasetsAndModels: Story = {
 };
 
 /**
- * Under each card, the chip of the result its operator kept in the execution shown: its rows, or a visualization. A
- * click shows it.
+ * Under each card, the chip of the result its operator kept in the execution shown, joined to the card's output by a
+ * dashed line: its rows, or a visualization. A click shows it.
  */
 export const KeptResults: Story = {
   args: {
@@ -495,6 +553,7 @@ export const KeptResults: Story = {
       await expect(under.left + under.width / 2).toBe(card.right);
       await expect(under.top - card.bottom).toBe(resultChip.gap);
     }
+    await chipLines(flow, "filter->limit:0", ["filter:result:line", "limit:result:line", "sort:result:line"]);
     await userEvent.click(limit);
     await expect(args.onShowResult).toHaveBeenCalledWith("limit");
   },
@@ -561,6 +620,6 @@ export const InTheDark: Story = {
 
     await expect(document.documentElement).toHaveClass("dark");
     await expect(flow).toHaveClass("dark");
-    await expect(within(cardOf(flow, "Filter")).getByText("Grace").parentElement).toHaveTextContent("Grace is editing");
+    await editingLabel(cardOf(flow, "Filter"), "Grace");
   },
 };

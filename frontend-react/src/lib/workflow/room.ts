@@ -23,8 +23,8 @@
 // and what each person sees is what the room holds.
 //
 // Each person in a room also tells the others where they are: what they have selected, where their pointer is on
-// the canvas, whose settings they are editing in its card (whoever began first holds it, and the others do not
-// open it meanwhile: holds.ts), and whose code they have open. Their cursor in that code is told by the code editor
+// the canvas, whose settings they are editing in its card (whoever began first holds it, and the others open it only
+// to read meanwhile: holds.ts), and whose code they have open. Their cursor in that code is told by the code editor
 // itself.
 
 import { HocuspocusProvider } from "@hocuspocus/provider";
@@ -48,8 +48,8 @@ export interface Collaborator {
   /** The operator whose code they have open. */
   code?: string;
   /**
-   * The operator whose settings they are editing in its card: whoever began first holds it, and the others do not
-   * open it meanwhile (holds.ts).
+   * The operator whose settings they are editing in its card: whoever began first holds it, and the others open it
+   * only to read meanwhile (holds.ts).
    */
   editing?: Claim;
 }
@@ -221,11 +221,11 @@ export class WorkflowRoom {
 
   /**
    * Tells the others which operator's settings this person is editing in its card, or that they have closed it:
-   * whoever began first holds it, and the others do not open it meanwhile (holds.ts). It is for a card opened to
-   * change the workflow, never for one opened only to look, as at a version or on a workflow this person may only
-   * look at. Of its own, the room tells nothing while the service lets this person only look, as once their access
-   * was lowered. The moment they began stays while they edit the same operator; told again after the connection was
-   * away, it begins anew, so whoever opened the card meanwhile keeps it.
+   * whoever began first holds it, and the others open it only to read meanwhile (holds.ts). It is for a card opened to
+   * change the workflow, never for one opened only to read, as one someone else holds, one of a version, or one on a
+   * workflow this person may only look at. Of its own, the room tells nothing while the service lets this person only
+   * look, as once their access was lowered. The moment they began stays while they edit the same operator; told again
+   * after the connection was away, it begins anew, so whoever opened the card meanwhile keeps it.
    */
   edit(operatorId: string | undefined): void {
     if (operatorId !== this.editing?.operatorId) {

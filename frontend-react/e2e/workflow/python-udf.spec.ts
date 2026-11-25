@@ -70,8 +70,9 @@ test("user writes a Python UDF: the operators after it get its new column, and t
 
   await editor.execute();
 
-  await expect(editor.operator("Python UDF")).toContainText(/Completed.*2 → 2 rows/);
-  await expect(editor.operator("Filter")).toContainText(/Completed.*2 → 1 row/);
+  await expect(editor.operator("Python UDF")).toContainText(/Completed2 → 2 rows/);
+  // One row is a row, and the state's line is the last of the card's text.
+  await expect(editor.operator("Filter")).toContainText(/Completed2 → 1 row$/);
   await expect(editor.resultCell("ADA")).toBeVisible();
 
   // The code is saved with the workflow: it is there when the workflow is opened again.

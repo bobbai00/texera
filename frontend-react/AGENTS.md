@@ -80,11 +80,13 @@ for the layout and the commands.
   - Someone else is drawn in their color through `presenceClassNames`, and who is editing is worded by
     `editingNotice` (`presence.ts`).
   - An operator is a card on the canvas (`operator-node.tsx`), and its settings are edited in its card, never in a
-    panel: one card open per viewer, which the editor alone opens and closes (`edit()`), with the operator's
-    properties in it (`operator-properties.tsx`). The canvas takes the open card's body as a render prop (`card`), and
-    what every card needs of the canvas reaches it through `CardCanvasContext` (`card-canvas.ts`), never through a
-    node's data. What floats over the canvas is the workspace, the details (what a version changed, comments, code)
-    and the execution's panel.
+    panel: one card open per viewer, with the operator's properties in it (`operator-properties.tsx`). The canvas only
+    asks for a card to open or close (`editing`, `onEdit`). In the editor, `edit()` opens and closes it, except that a
+    card open to change an operator that someone else turns out to hold just closes, and leaves its code open; the
+    hub's view keeps its own open card. The canvas takes the open card's body as a render prop (`card`), and what
+    every card needs of the canvas reaches it through `CardCanvasContext` (`card-canvas.ts`), never through a node's
+    data. What floats over the canvas is the workspace, the details (what a version changed, comments, code) and the
+    execution's panel.
   - An operator's name is `operatorName` (`operator-name.ts`). What a card says of its settings is `summary.ts`, whose
     `valueText` is the one way a value is written, as in what a version changed; rows are `formatRows`
     (`lib/format.ts`). How much a card says, and whether its chips show, are each viewer's choices
@@ -171,16 +173,18 @@ cases, including bad server answers (4xx, 5xx, malformed bodies).
   typing with a keyboard is tested end to end.
 - On the canvas, jsdom drags with `dragOnCanvas` (`src/testing/canvas.ts`). Test linking through `WorkflowDocument`,
   and open an operator's card with the keyboard, Enter on its group, as `$workflowId.test.tsx` does. jsdom lays
-  nothing out: sizes, places and what is seen are checked in a story.
+  nothing out, and `src/testing/setup.ts` gives every element one size: places worked out from that size are tested
+  in jsdom; real sizes, and what is seen, are checked in a story.
 - Find elements by role and accessible name, as a user does, and name each test after a behavior.
 - Vitest serves the app at `/`, not at `/alpha/`, so links in unit tests have no `/alpha` prefix.
 - A story never calls the network: it puts its data in the query cache. A story whose data comes from the cache, or
   whose layout depends on the screen's width, checks it in a `play` function, as the share dialog's and the shell's
   stories do. A story imports nothing that only a test loads, such as Vitest, Testing Library's renderer or the fake
   backend.
-- The canvas's stories draw `WorkflowCanvas` from literal data (`@/testing/workflow`), and the editor's open it on a
-  document of their own that enters no room (`useLocalEditing` in `src/testing/editing.ts`). After each, they check
-  that nothing reached the backend and that no text is under 12px (`src/testing/stories.ts`).
+- The canvas's stories draw `WorkflowCanvas` from literal data (`@/testing/workflow`), and the editor's open
+  `WorkflowEditor` on a document of its own that enters no room (`useLocalEditing` in `src/testing/editing.ts`).
+  After each, they check that they asked the backend nothing, not even for a socket, and that no text is under 12px
+  (`src/testing/stories.ts`).
 - An end-to-end test is one user task, written once against a page-object interface in `e2e/support/apps/` (such as
   `DatasetApp`), so it runs on both apps.
 

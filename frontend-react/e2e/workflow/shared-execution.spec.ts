@@ -39,11 +39,14 @@ test("an execution is shared: whoever has the workflow open watches it, and whoe
   await editor.execute();
 
   // The second browser did not start the execution, and shows it all the same: each operator, and the result, which
-  // the chip under the operator's card shows.
+  // the chip under the operator's card shows. How many rows the limit took is the engine's to say.
   await expect(secondEditor.executionState).toHaveText("Completed");
-  await expect(secondEditor.operator("Text Input")).toContainText(/Completed.*3 rows/);
-  await expect(secondEditor.operator("Limit")).toContainText(/Completed.*→ 2 rows/);
+  await expect(secondEditor.operator("Text Input")).toContainText(/Completed3 rows/);
+  await expect(secondEditor.operator("Limit")).toContainText(/Completed[\d,]+ → 2 rows/);
+  // The panel is on its console first, so that it is the chip that brings it back to the result.
+  await secondEditor.execution.getByRole("tab", { name: /^Console/ }).click();
   await secondEditor.resultChip("Limit", "2 rows").click();
+  await expect(secondEditor.execution.getByRole("tab", { name: "Result" })).toHaveAttribute("aria-selected", "true");
   await expect(secondEditor.resultCell("ada")).toBeVisible();
   await expect(secondEditor.resultCell("grace")).toBeVisible();
   await expect(secondEditor.resultCell("linus")).toBeHidden();
@@ -51,10 +54,10 @@ test("an execution is shared: whoever has the workflow open watches it, and whoe
   // Opening the workflow after the execution has ended shows how it ended.
   await secondEditor.page.reload();
   await expect(secondEditor.executionState).toHaveText("Completed");
-  await expect(secondEditor.operator("Limit")).toContainText(/Completed.*→ 2 rows/);
+  await expect(secondEditor.operator("Limit")).toContainText(/Completed[\d,]+ → 2 rows/);
 
   // An execution started in the second browser is the first one's too.
   await secondEditor.execute();
   await expect(editor.executionState).toHaveText("Completed");
-  await expect(editor.operator("Limit")).toContainText(/Completed.*→ 2 rows/);
+  await expect(editor.operator("Limit")).toContainText(/Completed[\d,]+ → 2 rows/);
 });

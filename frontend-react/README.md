@@ -127,11 +127,11 @@ cannot be executed as it is says why, and one left out of executions is faded. T
 An operator's settings are edited in its card, which opens in place with its pencil, a double click or Enter, and
 closes with Done, Escape or a click on the empty canvas: one card open at a time, which holds the operator's name, its
 settings and its code's button. A change is in the workflow as it is made, so closing saves nothing more. While a card
-is open, the cards under it, in its column, are drawn lower to make room for it, and the rows are drawn further apart
-where cards, with their chips, are taller than a row holds. That is the viewer's drawing only
-(`src/lib/workflow/canvas-geometry.ts`): the workflow keeps its places as if every card were closed and said its
-settings in one line, and a card that is moved is kept where it was dropped. A workflow laid out for the Angular app's
-tiles, which stand closer, may need "Arrange the operators" for its cards to have their room.
+is open, the cards under it, in its column, are drawn lower to make room for it, and all the rows are drawn further
+apart when the tallest card, with the most chips any card has, is taller than a row holds. That is the viewer's
+drawing only (`src/lib/workflow/canvas-geometry.ts`): the workflow keeps its places as if every card were closed and
+said its settings in one line, and a card that is moved is kept where it was dropped. A workflow laid out for the
+Angular app's tiles, which stand closer, may need "Arrange the operators" for its cards to have their room.
 
 Above a card stand chips of the versions of the datasets and models its operator reads, which its settings name by
 their paths (`src/lib/resource-path.ts`, which reads them as the backend does, and `src/lib/workflow/resources.ts`).
@@ -201,7 +201,7 @@ The story and end-to-end tests use the installed Google Chrome. The end-to-end t
 
 The stories of the workflow canvas and of the editor draw them from literal data, the editor on a workflow of its own
 that enters no room, and check in Chrome what jsdom cannot see: where cards and chips are drawn, what is seen, and
-that no text is under 12px. Each checks that it asked the backend nothing.
+that no text is under 12px. Each checks that it asked the backend nothing, not even for a socket.
 
 The tests in `e2e/workflow/`, `e2e/compute/` and `e2e/hub/` are of what only this app has: building a workflow, the
 columns each operator is offered, executing, writing a Python UDF and its parameters, two people editing one

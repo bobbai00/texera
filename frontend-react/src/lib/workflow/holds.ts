@@ -20,12 +20,13 @@
 // Holds: one person at a time edits an operator's settings. Whoever opens an operator's card to change it tells the
 // others which operator it is and the moment they opened it, by their own clock (WorkflowRoom.edit()): that is
 // their claim, and the claim that wins is the hold. Of those who open one card, whoever began first holds it until
-// they close it or are no longer in the room; meanwhile the others see who holds it, and do not open it. A claim
-// told again after its connection was away begins anew, so whoever opened the card meanwhile keeps it. Everyone
-// works out who holds what from the claims everyone told the room, by the rules here, so all come to the same
-// answer, even when two people open one card at the same moment. A card opened only to look, as at a version or on
-// a workflow its viewer may only look at, claims nothing, and the room tells no claim while the service lets a
-// person only look. A person here is a place in the room, not an account: two tabs of one person are two people.
+// they close it or are no longer in the room; meanwhile the others see who holds it, and open its card only to read:
+// a hold stops changing, never reading. A claim told again after its connection was away begins anew, so whoever
+// opened the card meanwhile keeps it. Everyone works out who holds what from the claims everyone told the room, by
+// the rules here, so all come to the same answer, even when two people open one card at the same moment. A card
+// opened only to read claims nothing: one that someone else held when it was opened, one of a version, or one on a
+// workflow its viewer may only look at; and the room tells no claim while the service lets a person only look. A
+// person here is a place in the room, not an account: two tabs of one person are two people.
 //
 // Holds are coordination in the UI only. The shared editing service passes them on without looking at them, and
 // takes a change to a held operator like any other. Undo and redo are not guarded either, nor is restoring a version,
@@ -53,8 +54,9 @@ export function holderOf<P extends Claimant>(operatorId: string, everyone: reado
 }
 
 /**
- * The operators that someone other than this person holds, each with whoever holds it: this person may open any
- * operator that is not in it. `me` is undefined for someone outside the room.
+ * The operators that someone other than this person holds, each with whoever holds it: this person may change any
+ * operator that is not in it, and opens the card of one that is only to read. `me` is undefined for someone outside
+ * the room.
  */
 export function heldByOthers<P extends Claimant>(me: P | undefined, others: readonly P[]): Map<string, P> {
   const everyone = me ? [me, ...others] : others;

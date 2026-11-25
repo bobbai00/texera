@@ -117,9 +117,9 @@ const nothingHeld: ReadonlyMap<string, Collaborator> = new Map();
  * the code of the person they follow, or what a version shown changed. Each is moved, resized and minimized as the user
  * likes. The editor shows where the other people editing the workflow are, and lets the user follow one of them. One
  * person at a time edits an operator's settings: whoever opened its card first holds it (holds.ts), and the others see
- * who, and neither open its card nor change it until they are done; its code stays anyone's to type in. Someone who may
- * only view the workflow gets the canvas and the panels with nothing to change in them. A version is shown as it was,
- * with what changed, without touching the workflow itself.
+ * who, and open its card only to read, changing nothing of it until they are done; its code stays anyone's to type in.
+ * Someone who may only view the workflow gets the canvas and the panels with nothing to change in them. A version is
+ * shown as it was, with what changed, without touching the workflow itself.
  */
 export function WorkflowEditor({
   workflow,

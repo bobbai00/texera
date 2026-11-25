@@ -19,7 +19,6 @@
 
 import { useMemo, useState, useSyncExternalStore } from "react";
 import type { WorkflowEditing } from "@/features/workflow/use-workflow-editing";
-import type { PortSchemas } from "@/lib/workflow/compilation";
 import { WorkflowDocument, writeContent } from "@/lib/workflow/document";
 import type { WorkflowContent } from "@/lib/workflow/model";
 import type { OperatorMetadata } from "@/lib/workflow/operator-schema";
@@ -29,12 +28,6 @@ export interface LocalEditingOptions {
   /** What the workflow holds when it opens. */
   content: WorkflowContent;
   metadata: OperatorMetadata;
-  /** The others the editor shows in the room, as presence would tell of them: what they select and edit. */
-  collaborators?: Collaborator[];
-  /** The columns that arrive at each input port of each operator, as compiling the workflow would say. */
-  inputSchemas?: PortSchemas;
-  /** Why each operator that cannot be executed cannot, by its id, as compiling and checking it would say. */
-  problems?: Record<string, string>;
 }
 
 const nobody: Collaborator[] = [];
@@ -43,17 +36,11 @@ const none = {};
 /**
  * A workflow open for editing in this page alone, as a story opens the editor: in a document of its own, filled with
  * `content` as the shared editing service fills one, and with a room that is never entered. So nothing is sent, saved
- * or compiled, no socket is opened, and the only others in the room are those it is told of. What the editor changes,
- * it changes in the document, and shows as it shows what the room holds. It imports nothing that only a test can load,
- * such as Vitest, Testing Library or the fake backend.
+ * or compiled, no socket is opened, and no one else is in the room. What the editor changes, it changes in the
+ * document, and shows as it shows what the room holds. It imports nothing that only a test can load, such as Vitest,
+ * Testing Library or the fake backend.
  */
-export function useLocalEditing({
-  content,
-  metadata,
-  collaborators = nobody,
-  inputSchemas = none,
-  problems = none,
-}: LocalEditingOptions): WorkflowEditing {
+export function useLocalEditing({ content, metadata }: LocalEditingOptions): WorkflowEditing {
   const [document] = useState(() => {
     const filled = new WorkflowDocument();
     writeContent(filled.doc, content);
@@ -67,14 +54,15 @@ export function useLocalEditing({
     entry: "entered",
     offline: false,
     save: "saved",
-    collaborators,
+    collaborators: nobody,
     document,
     room,
     content: live,
     history,
     schemas,
-    inputSchemas,
-    problems,
+    // Nothing is compiled: no columns are known to arrive anywhere, and nothing is found wrong.
+    inputSchemas: none,
+    problems: none,
     lostOfflineChanges: false,
     acknowledgeLostChanges: () => {},
   };
