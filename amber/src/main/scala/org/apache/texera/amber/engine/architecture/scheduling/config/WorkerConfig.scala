@@ -20,8 +20,14 @@
 package org.apache.texera.amber.engine.architecture.scheduling.config
 
 import org.apache.texera.common.config.ApplicationConfig
-import org.apache.texera.amber.core.virtualidentity.ActorVirtualIdentity
-import org.apache.texera.amber.core.workflow.{PhysicalOp, PythonEnvironment, PythonEnvironmentRef}
+import org.apache.texera.amber.core.storage.CatalogIdentity
+import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ExecutionIdentity}
+import org.apache.texera.amber.core.workflow.{
+  PhysicalOp,
+  PythonEnvironment,
+  PythonEnvironmentRef,
+  WorkflowContext
+}
 import org.apache.texera.amber.util.VirtualIdentityUtils
 import org.apache.texera.service.util.LargeBinaryManager
 
@@ -40,6 +46,11 @@ case object WorkerConfig {
     }
 
     lazy val largeBinaryBaseUri = LargeBinaryManager.baseUriForExecution(physicalOp.executionId.id)
+    // The token this unit was handed with the execution's start: each worker holds it again in
+    // its own JVM, which may be on another machine.
+    val catalogToken = CatalogIdentity
+      .registered(physicalOp.executionId.id)
+      .fold(CatalogToken.None)(CatalogToken(_))
     List.tabulate(workerCount)(idx =>
       WorkerConfig(
         VirtualIdentityUtils.createWorkerIdentity(physicalOp.workflowId, physicalOp.id, idx),
@@ -47,7 +58,9 @@ case object WorkerConfig {
           case PythonEnvironmentRef.Resolved(environment) => Some(environment)
           case _                                          => None
         },
-        largeBinaryBaseUri = largeBinaryBaseUri
+        largeBinaryBaseUri = largeBinaryBaseUri,
+        executionId = physicalOp.executionId,
+        catalogToken = catalogToken
       )
     )
   }
@@ -59,5 +72,20 @@ case class WorkerConfig(
     pythonEnvironment: Option[PythonEnvironment] = None,
     // Coordinator-named, execution-scoped base URI under which this worker's large binaries
     // live; create() appends a unique suffix. Empty when large binaries are unconfigured.
-    largeBinaryBaseUri: String = ""
-)
+    largeBinaryBaseUri: String = "",
+    // The execution the worker runs for, and that execution's token for the lake's catalog,
+    // which the worker holds as it starts (holdCatalogToken) and a Python worker hands to its
+    // process. No token where the unit was handed none.
+    executionId: ExecutionIdentity = WorkflowContext.DEFAULT_EXECUTION_ID,
+    catalogToken: CatalogToken = CatalogToken.None
+) {
+
+  /**
+    * Holds the worker's token in this JVM, for its execution: from then on, every catalog
+    * request made here about the execution carries it. A worker given no token holds none.
+    */
+  def holdCatalogToken(): Unit =
+    if (catalogToken != CatalogToken.None) {
+      CatalogIdentity.register(executionId.id, catalogToken.value)
+    }
+}

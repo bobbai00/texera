@@ -25,6 +25,12 @@ import ch.qos.logback.core.read.ListAppender
 import com.google.protobuf.timestamp.Timestamp
 import org.apache.iceberg.Table
 import org.apache.iceberg.catalog.TableIdentifier
+import org.apache.iceberg.exceptions.{
+  ForbiddenException,
+  NoSuchNamespaceException,
+  NotAuthorizedException,
+  ServiceFailureException
+}
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   ConsoleRow,
@@ -32,11 +38,11 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
+  ExecutionNamespace,
   IcebergCatalogInstance,
   NoSuchExecutionTableException,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore,
-  VFSResourceType,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
@@ -62,6 +68,7 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   OperatorMetrics,
   OperatorStatistics
 }
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.common.config.StorageConfig
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually
@@ -70,6 +77,7 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.{Millis, Seconds, Span}
 import org.slf4j.LoggerFactory
 
+import java.io.{IOException, UncheckedIOException}
 import java.net.URI
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicLong}
 import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch, Executors, TimeUnit}
@@ -80,7 +88,8 @@ import scala.util.Try
 /**
   * Specs for the recorder that writes a run's record: its log, its statistics and its console.
   * Its tables are real ones, of executions of a workflow of this suite's own, in the catalog the
-  * build's tests use, and are dropped after the suite. Unless a case says otherwise the recorder
+  * build's tests use: each execution's namespace is made as the Dashboard service makes it, and
+  * is dropped, with the tables in it, after the suite. Unless a case says otherwise the recorder
   * ticks only when the case asks it to, on a clock the case sets, and the stores it writes to
   * are the lake's, at most wrapped to count, slow or fail a call.
   */
@@ -101,21 +110,15 @@ class ExecutionRecorderSpec
   private val beatEveryMs = 30000L
 
   override protected def afterAll(): Unit = {
-    madeLogs.asScala.foreach { uri =>
-      Try(ExecutionLogStore.drop(uri))
-      Try(RuntimeStatisticsStore.drop(statisticsUriOf(uri)))
-      Try(ConsoleMessageStore.drop(consoleUriOf(uri)))
-    }
+    madeLogs.asScala.foreach(uri => Try(TestUtils.dropExecutionNamespace(executionIdOf(uri))))
     super.afterAll()
   }
 
-  /** The log of an execution no other case names. */
+  /** The log of an execution no other case names, whose namespace is made. */
   private def freshLog(): URI = {
-    val uri = ExecutionLogStore.logUri(
-      workflowId,
-      ExecutionIdentity(nextExecutionId.getAndIncrement()),
-      None
-    )
+    val eid = nextExecutionId.getAndIncrement()
+    TestUtils.makeExecutionNamespace(eid)
+    val uri = ExecutionLogStore.logUri(workflowId, ExecutionIdentity(eid), None)
     madeLogs.add(uri)
     uri
   }
@@ -266,18 +269,16 @@ class ExecutionRecorderSpec
     def console: Seq[ConsoleRow] =
       ConsoleMessageStore.read(consoleUri, None, 0, Int.MaxValue)._1
 
-    /** The table at `of`, one of the recorder's three, as the catalog has it now. */
+    /**
+      * The table at `of`, one of the recorder's three, as the catalog has it now: in the
+      * namespace of its execution, named after its URI.
+      */
     def tableAt(of: URI): Table = {
-      val namespace = VFSURIFactory.decodeURI(of).resourceType match {
-        case VFSResourceType.EXECUTION_LOG => StorageConfig.icebergTableExecutionLogNamespace
-        case VFSResourceType.RUNTIME_STATISTICS =>
-          StorageConfig.icebergTableRuntimeStatisticsNamespace
-        case VFSResourceType.CONSOLE_MESSAGES => StorageConfig.icebergTableConsoleMessagesNamespace
-        case other                            => fail(s"the recorder writes no $other")
-      }
+      val eid = VFSURIFactory.decodeURI(of).executionId.id
+      val name = of.getPath.stripPrefix("/").replace("/", "_")
       IcebergCatalogInstance
-        .getInstance()
-        .loadTable(TableIdentifier.of(namespace, of.getPath.stripPrefix("/").replace("/", "_")))
+        .getInstance(execution = Some(eid))
+        .loadTable(TableIdentifier.of(ExecutionNamespace.of(eid), name))
     }
 
     def table: Table = tableAt(uri)
@@ -946,6 +947,127 @@ class ExecutionRecorderSpec
     eventually(f.threadAlive shouldBe false)
     // The table itself is as it was: the recorder only stopped.
     f.rows shouldBe Seq((1L, "RUNNING", None))
+  }
+
+  // ---------------------------------------------------------------------------
+  // a lake that refuses the record
+  // ---------------------------------------------------------------------------
+
+  /** What a recorder says as it stops for a lake that refuses the record of execution `eid`. */
+  private def refusedLine(eid: Long): (Level, String) =
+    (
+      Level.WARN,
+      s"The lake refuses the record of execution $eid, as it does once the execution's access " +
+        "to it has ended: the record is written no more."
+    )
+
+  /**
+    * What the catalog's client throws once a run's access to the lake has ended, by what it says:
+    * the token is refused, or the execution's namespace is gone. A write to the object store,
+    * which the catalog signs, finds the catalog's answer wrapped.
+    */
+  private val refusals: Seq[(String, () => Throwable)] = Seq(
+    "a token the catalog refuses" ->
+      (() => new ForbiddenException("Forbidden: the token may not write here")),
+    "a token the catalog no longer takes" ->
+      (() => new NotAuthorizedException("Not authorized: the token expired")),
+    "a namespace that is gone" ->
+      (() => new NoSuchNamespaceException("Namespace does not exist: execution-1")),
+    "a signature the catalog refuses, under the object store's write" -> (() =>
+      new UncheckedIOException(
+        new IOException(
+          "the upload failed",
+          new ForbiddenException("Forbidden: the request may not be signed")
+        )
+      )
+    )
+  )
+
+  "A record the lake refuses" should "not be written again, and the recorder stop, whatever the refusal" in {
+    refusals.foreach {
+      case (refusal, thrown) =>
+        withClue(s"$refusal: ") {
+          val refused = new AtomicBoolean(false)
+          val f = new Fixture(
+            beat = (uri, nowMs) =>
+              if (refused.get()) throw thrown()
+              else ExecutionLogStore.beat(uri, nowMs)
+          )
+          f.told("RUNNING")
+          f.tick()
+          f.threadAlive shouldBe true
+
+          val lines = logged {
+            refused.set(true)
+            f.tick()
+            eventually(f.threadAlive shouldBe false)
+          }
+
+          // Said once, and the record is as it was: the recorder only stopped.
+          lines shouldBe Seq(refusedLine(executionIdOf(f.uri)))
+          f.rows shouldBe Seq((1L, "RUNNING", None))
+          // What the run does after that is dropped, and nothing waits to be written.
+          f.recorder.state("COMPLETED")
+          f.recorder.awaitIdle(1.second) shouldBe true
+          f.rows shouldBe Seq((1L, "RUNNING", None))
+        }
+    }
+  }
+
+  it should "stop the recorder when it is a row that is refused, also after the run's end" in {
+    val refused = new AtomicBoolean(false)
+    val f = new Fixture(
+      append = (uri, rows, nowMs) =>
+        if (refused.get()) throw new ForbiddenException("Forbidden: the token may not write here")
+        else ExecutionLogStore.append(uri, rows, nowMs)
+    )
+    f.told("RUNNING")
+    refused.set(true)
+
+    // The end is not tried again every few seconds for as long as the unit lives.
+    f.clock.addAndGet(1000)
+    f.recorder.state("COMPLETED")
+
+    f.recorder.awaitIdle(30.seconds) shouldBe true
+    eventually(f.threadAlive shouldBe false)
+    f.rows shouldBe Seq((1L, "RUNNING", None))
+    f.label.ended shouldBe false
+  }
+
+  it should "stop the recorder as it starts, when the execution has no namespace to make its tables in" in {
+    val f = new Fixture(
+      create =
+        (_, _, _) => throw new NoSuchNamespaceException("Namespace does not exist: execution-1")
+    )
+
+    eventually(f.threadAlive shouldBe false)
+
+    // Nothing is made, nor made again, and what the run does is dropped.
+    f.recorder.state("READY")
+    f.recorder.awaitIdle(1.second) shouldBe true
+    f.tick()
+    f.askedFor("log.create") shouldBe 1
+    f.askedFor("statistics.create") shouldBe 0
+    ExecutionLogStore.label(f.uri) shouldBe None
+  }
+
+  "A record the lake cannot answer for, without refusing it," should "not be taken for one it refuses: the recorder goes on" in {
+    val failing = new AtomicBoolean(true)
+    val f = new Fixture(
+      beat = (uri, nowMs) =>
+        if (failing.get()) throw new ServiceFailureException("Service failed: 503: restarting")
+        else ExecutionLogStore.beat(uri, nowMs)
+    )
+    f.told("RUNNING")
+
+    f.tick()
+    f.tick()
+    f.threadAlive shouldBe true
+    failing.set(false)
+    f.tick()
+
+    f.label.beatMs shouldBe f.clock.get()
+    f.threadAlive shouldBe true
   }
 
   // ---------------------------------------------------------------------------

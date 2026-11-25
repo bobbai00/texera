@@ -40,7 +40,7 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowUserAccess,
   WorkflowVersion
 }
-import org.apache.texera.web.service.execution.ExecutionExpiry
+import org.apache.texera.web.service.execution.{ExecutionExpiry, RecordingCatalogAccess}
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -76,7 +76,9 @@ class AdminUserResourceSpec
   private val resource = new AdminUserResource(
     new ExecutionExpiry(
       warehousesEnabled = false,
-      deleteBinaries = eid => binariesDeletedFor.add(eid)
+      deleteBinaries = eid => binariesDeletedFor.add(eid),
+      // What a delete ends of an execution's token is kept, as on a REST catalog.
+      access = new RecordingCatalogAccess()
     )
   )
 

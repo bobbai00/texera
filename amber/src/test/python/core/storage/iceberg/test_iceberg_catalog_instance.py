@@ -67,7 +67,7 @@ class TestRestCatalogCachedPerWarehouse:
             patch.object(
                 iceberg_catalog_instance,
                 "create_rest_catalog",
-                side_effect=lambda *args: object(),
+                side_effect=lambda *args, **kwargs: object(),
             ) as mock_create,
         ):
             first = IcebergCatalogInstance.get_instance("wh-a")
@@ -89,7 +89,7 @@ class TestRestCatalogCachedPerWarehouse:
             patch.object(
                 iceberg_catalog_instance,
                 "create_rest_catalog",
-                side_effect=lambda *args: object(),
+                side_effect=lambda *args, **kwargs: object(),
             ) as mock_create,
         ):
             from_none = IcebergCatalogInstance.get_instance(None)
@@ -98,6 +98,35 @@ class TestRestCatalogCachedPerWarehouse:
         assert from_none is from_name, "None must share the default warehouse's entry"
         assert mock_create.call_count == 1
         assert mock_create.call_args.args[1] == "default-wh"
+
+    def test_every_catalog_carries_the_token_of_the_execution(self):
+        """One process serves one execution, whose token every REST catalog of the
+        process sends, whatever its warehouse."""
+        type_p, default_p, uri_p = _rest_config()
+        with (
+            type_p,
+            default_p,
+            uri_p,
+            patch.object(
+                StorageConfig, "ICEBERG_REST_CATALOG_TOKEN", "execution-token"
+            ),
+            patch.object(
+                iceberg_catalog_instance,
+                "create_rest_catalog",
+                side_effect=lambda *args, **kwargs: object(),
+            ) as mock_create,
+        ):
+            IcebergCatalogInstance.get_instance("wh-a")
+            IcebergCatalogInstance.get_instance(None)
+
+        assert [call.args for call in mock_create.call_args_list] == [
+            ("texera_iceberg", "wh-a", "http://localhost:8181"),
+            ("texera_iceberg", "default-wh", "http://localhost:8181"),
+        ]
+        assert [call.kwargs for call in mock_create.call_args_list] == [
+            {"token": "execution-token"},
+            {"token": "execution-token"},
+        ]
 
     def test_replace_instance_keys_by_warehouse(self):
         sentinel = object()

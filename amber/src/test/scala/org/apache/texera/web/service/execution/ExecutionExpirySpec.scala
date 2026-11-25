@@ -22,6 +22,7 @@ package org.apache.texera.web.service.execution
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.classic.{Level, Logger => LogbackLogger}
 import ch.qos.logback.core.read.ListAppender
+import org.apache.iceberg.catalog.{Namespace, SupportsNamespaces, TableIdentifier}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
@@ -30,19 +31,18 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
+  ExecutionNamespace,
   ExecutionTables,
+  IcebergCatalogInstance,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
-import org.apache.texera.amber.core.virtualidentity.{
-  ExecutionIdentity,
-  OperatorIdentity,
-  PhysicalOpIdentity,
-  WorkflowIdentity
-}
+import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, PhysicalOpIdentity}
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.engine.e2e.TestUtils
+import org.apache.texera.amber.util.IcebergUtil
 import org.apache.texera.dao.jooq.generated.Tables.{
   USER_WAREHOUSE,
   WORKFLOW_EXECUTIONS,
@@ -83,9 +83,11 @@ import scala.util.Try
 
 /**
   * Specs for [[ExecutionExpiry]], on real rows and real tables: the rows are in `MockTexeraDB`,
-  * and each execution's plan, log, statistics, console, result and state tables are tables of
-  * the catalog the build's tests use (the Postgres JDBC catalog in CI), named after this
-  * suite's own workflows and executions and dropped after it.
+  * and each execution's log, statistics, console, result and state tables are tables of the
+  * catalog the build's tests use (the Postgres JDBC catalog in CI), in the execution's own
+  * namespace, which the suite makes as the Dashboard service does and drops after it. What an
+  * execution's token can do is ended at a Lakekeeper that keeps what it is asked
+  * ([[RecordingLakekeeper]]).
   *
   * No large binary is deleted: the expiry under test notes the executions it would delete them
   * for. Replay logs are folders under a temporary directory.
@@ -157,19 +159,8 @@ class ExecutionExpirySpec
 
   override protected def afterAll(): Unit =
     try {
-      // Whatever a case left, by the names of this suite's executions.
-      madeEids.asScala.foreach { eid =>
-        Seq(testWid, otherWid).foreach { wid =>
-          Try(
-            ExecutionTables.dropNamed(
-              WorkflowIdentity(wid.toLong),
-              ExecutionIdentity(eid.toLong),
-              None,
-              ExecutionTables.AllKinds
-            )
-          )
-        }
-      }
+      // Whatever a case left, in the namespaces of this suite's executions.
+      madeEids.asScala.foreach(eid => Try(TestUtils.dropExecutionNamespace(eid.toLong)))
     } finally {
       closeConnectionPool()
       super.afterAll()
@@ -195,7 +186,9 @@ class ExecutionExpirySpec
   private lazy val someUnit = freshUnit()
 
   /**
-    * An execution of `wid` on `cuid`: open, unless `outcome` closes it, as of `endedAtMs`.
+    * An execution of `wid` on `cuid`: open, unless `outcome` closes it, as of `endedAtMs`. Its
+    * namespace is made, as the Dashboard service makes it at the create, empty: what an earlier
+    * run of the suite left in it is dropped.
     *
     * @param fromLog whether the outcome is its log's ending, not a verdict
     */
@@ -229,8 +222,17 @@ class ExecutionExpirySpec
     outcome.foreach { how =>
       ExecutionRecords.close(eid.toLong, how, None, endedAt, fromLog) shouldBe true
     }
-    record(eid.toLong)
+    val execution = record(eid.toLong)
+    TestUtils.dropExecutionNamespace(execution.eid, execution.warehouse)
+    TestUtils.makeExecutionNamespace(execution.eid, execution.warehouse)
+    execution
   }
+
+  private def hasNamespace(execution: ExecutionRecord): Boolean =
+    IcebergCatalogInstance
+      .getInstance(execution.warehouse)
+      .asInstanceOf[SupportsNamespaces]
+      .namespaceExists(Namespace.of(ExecutionNamespace.of(execution.eid)))
 
   private def record(eid: Long): ExecutionRecord =
     ExecutionRecords.find(eid).getOrElse(fail(s"execution $eid has no row"))
@@ -358,13 +360,15 @@ class ExecutionExpirySpec
     * An expiry under test. It deletes no large binary: `binaries` notes the executions it would
     * delete them for, after `beforeBinaries` ran. Its lake calls are the stores', its clock
     * stands at `expiredAtMs`, and it deletes replay logs for real unless a case says otherwise.
+    * What it ends of the executions' tokens, `lakekeeper` keeps.
     */
   private class Fixture(
       warehousesEnabled: Boolean = false,
       label: URI => Option[ExecutionLabel] = ExecutionLogStore.label,
       beforeBinaries: Long => Unit = _ => (),
       deleteReplayLog: String => Unit = ExecutionExpiry.deleteReplayLog,
-      batchSize: Int = ExecutionExpiry.BatchSize
+      batchSize: Int = ExecutionExpiry.BatchSize,
+      val lakekeeper: RecordingLakekeeper = new RecordingLakekeeper()
   ) {
     val binaries = new ConcurrentLinkedQueue[Long]()
     val labelsRead = new ConcurrentLinkedQueue[URI]()
@@ -382,10 +386,14 @@ class ExecutionExpirySpec
       },
       deleteReplayLog = deleteReplayLog,
       now = () => clock.get(),
-      batchSize = batchSize
+      batchSize = batchSize,
+      access = new ExecutionCatalogAccess(lakekeeper, rest = true, setup = () => ())
     )
 
     def binariesDeleted: Seq[Long] = binaries.asScala.toSeq
+
+    /** The executions whose catalog users it deleted, in the order it did. */
+    def revoked: Seq[Long] = lakekeeper.deleted.map(_.stripPrefix("oidc~texera-execution-").toLong)
   }
 
   private class Outage extends RuntimeException("the lake is out of reach")
@@ -410,7 +418,7 @@ class ExecutionExpirySpec
 
   // --- expire ---
 
-  "ExecutionExpiry.expire" should "drop what the run produced, keep its log and statistics, and mark the row" in {
+  "ExecutionExpiry.expire" should "drop what the run produced, keep its log and statistics, end what its token can do, and mark the row" in {
     val fixture = new Fixture()
     val execution = ran(made())
     ExecutionRecords.setStoredBytes(execution.eid, ExecutionCloser.storedBytesOf(execution))
@@ -422,6 +430,10 @@ class ExecutionExpirySpec
     producedBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe false })
     keptBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe true })
     fixture.binariesDeleted shouldBe Seq(execution.eid)
+    // Its token can no longer write: nothing it may write is left. Its namespace stays, with
+    // what is kept.
+    fixture.revoked shouldBe Seq(execution.eid)
+    hasNamespace(execution) shouldBe true
     // What is kept can still be read.
     ExecutionLogStore.label(execution.logUri).flatMap(_.state) shouldBe Some("COMPLETED")
     RuntimeStatisticsStore.read(statisticsOf(execution)) should have size 1
@@ -453,6 +465,7 @@ class ExecutionExpirySpec
     row(execution) shouldBe first
     keptBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe true })
     fixture.binariesDeleted shouldBe Seq(execution.eid)
+    fixture.revoked shouldBe Seq(execution.eid)
     lines shouldBe Nil
   }
 
@@ -481,6 +494,8 @@ class ExecutionExpirySpec
     }
     row(open).getResultsExpiredAt shouldBe null
     fixture.binariesDeleted shouldBe Nil
+    // An open execution may still run: its token still works.
+    fixture.revoked shouldBe Nil
   }
 
   it should "drop the result and the state table of every port the run stored, found by their names" in {
@@ -528,7 +543,7 @@ class ExecutionExpirySpec
     row(execution).getStoredBytes shouldBe 0L
   }
 
-  it should "leave the tables of an execution in a per-user warehouse alone while those are disabled, and not mark it" in {
+  it should "leave the tables of an execution in a per-user warehouse alone while those are disabled, and not mark it, but end what its token can do" in {
     // Under any catalog but the REST one, a warehouse's URI names the same table as the default's.
     val execution = ran(made(warehouse = Some(whid)))
     execution.logUri.toString should include(s"/wh/$warehouseName/")
@@ -541,18 +556,22 @@ class ExecutionExpirySpec
     }
     row(execution).getResultsExpiredAt shouldBe null
     disabled.binariesDeleted shouldBe Nil
+    // A revoke takes the catalog, not the warehouse.
+    disabled.revoked shouldBe Seq(execution.eid)
     lines shouldBe Seq(
       (
         Level.INFO,
         s"Leaving the results of execution ${execution.eid} where they are: per-user " +
-          "warehouses are disabled."
+          "warehouses are disabled. Its token can no longer reach them."
       )
     )
 
     // With warehouses enabled it is expired like any other, in its warehouse.
-    new Fixture(warehousesEnabled = true).expiry.expire(execution.eid) shouldBe true
+    val enabled = new Fixture(warehousesEnabled = true)
+    enabled.expiry.expire(execution.eid) shouldBe true
     producedBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe false })
     keptBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe true })
+    enabled.revoked shouldBe Seq(execution.eid)
   }
 
   it should "leave the row unmarked when something fails, so that a later call finishes" in {
@@ -564,10 +583,30 @@ class ExecutionExpirySpec
 
     row(execution).getResultsExpiredAt shouldBe null
     ExecutionRecords.unexpired(execution.eid) shouldBe defined
+    failing.revoked shouldBe Nil
 
     val fixture = new Fixture()
     fixture.expiry.expire(execution.eid) shouldBe true
     fixture.binariesDeleted shouldBe Seq(execution.eid)
+    row(execution).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
+  }
+
+  it should "leave the row unmarked when what the execution's token can do cannot be ended" in {
+    val outage = new Outage
+    val failing = new Fixture(lakekeeper = new RecordingLakekeeper {
+      override def deleteUser(id: String): Unit = throw outage
+    })
+    val execution = ran(made())
+
+    the[Outage] thrownBy failing.expiry.expire(execution.eid) shouldBe outage
+
+    row(execution).getResultsExpiredAt shouldBe null
+    producedBy(execution).foreach(uri => withClue(s"$uri: ") { has(uri) shouldBe false })
+
+    // A later call ends it, and marks the row.
+    val fixture = new Fixture()
+    fixture.expiry.expire(execution.eid) shouldBe true
+    fixture.revoked shouldBe Seq(execution.eid)
     row(execution).getResultsExpiredAt shouldBe new Timestamp(expiredAtMs)
   }
 
@@ -1027,13 +1066,22 @@ class ExecutionExpirySpec
 
   // --- dropAll ---
 
-  "ExecutionExpiry.dropAll" should "leave no table of the execution, no large binary and no replay log, and leave its row" in {
+  "ExecutionExpiry.dropAll" should "leave no table of the execution, no namespace, no catalog user, no large binary and no replay log, and leave its row" in {
     val fixture = new Fixture()
     val folder = replayLog()
     val execution = ran(made(replayLog = Some(folder.toUri.toString)))
     val other = ran(made())
-    // A table of a port of the execution's that only its name ties to it.
+    // A table of a port of the execution's that only its name ties to it, and one in its
+    // namespace that no name ties to it.
     val unnamed = tableOfLines(resultOf(execution, port("left-behind", 0)))
+    val foreign = TableIdentifier.of(ExecutionNamespace.of(execution.eid), "made_by_no_store")
+    IcebergUtil.createTable(
+      IcebergCatalogInstance.getInstance(),
+      ExecutionNamespace.of(execution.eid),
+      foreign.name(),
+      IcebergUtil.toIcebergSchema(Schema().add("line", AttributeType.STRING)),
+      overrideIfExists = true
+    )
     val before = row(execution)
 
     val logLines = logged { fixture.expiry.dropAll(execution.eid) }
@@ -1041,6 +1089,9 @@ class ExecutionExpirySpec
     (producedBy(execution) ++ keptBy(execution) :+ unnamed).foreach { uri =>
       withClue(s"$uri: ") { has(uri) shouldBe false }
     }
+    IcebergCatalogInstance.getInstance().tableExists(foreign) shouldBe false
+    hasNamespace(execution) shouldBe false
+    fixture.revoked shouldBe Seq(execution.eid)
     fixture.binariesDeleted shouldBe Seq(execution.eid)
     Files.exists(folder) shouldBe false
     // The row is the caller's to delete; it no longer names the replay log, which is gone.
@@ -1051,10 +1102,12 @@ class ExecutionExpirySpec
     (producedBy(other) ++ keptBy(other)).foreach { uri =>
       withClue(s"$uri: ") { has(uri) shouldBe true }
     }
+    hasNamespace(other) shouldBe true
     logLines shouldBe Seq(
       (
         Level.INFO,
-        s"Dropped what execution ${execution.eid} of workflow $testWid kept: 6 tables."
+        s"Dropped what execution ${execution.eid} of workflow $testWid kept: its namespace " +
+          s"execution-${execution.eid}, with every table in it."
       )
     )
   }
@@ -1090,7 +1143,7 @@ class ExecutionExpirySpec
     }
   }
 
-  it should "leave the tables of an execution in a per-user warehouse where they are while those are disabled" in {
+  it should "leave the tables of an execution in a per-user warehouse where they are while those are disabled, and end what its token can do" in {
     val fixture = new Fixture(warehousesEnabled = false)
     val folder = replayLog()
     val execution =
@@ -1101,6 +1154,8 @@ class ExecutionExpirySpec
     (producedBy(execution) ++ keptBy(execution)).foreach { uri =>
       withClue(s"$uri: ") { has(uri) shouldBe true }
     }
+    // A revoke takes the catalog, not the warehouse.
+    fixture.revoked shouldBe Seq(execution.eid)
     // What it keeps outside its warehouse goes with it.
     fixture.binariesDeleted shouldBe Seq(execution.eid)
     Files.exists(folder) shouldBe false
@@ -1109,10 +1164,13 @@ class ExecutionExpirySpec
         "left where they are, as per-user warehouses are disabled."
     )
 
-    new Fixture(warehousesEnabled = true).expiry.dropAll(execution.eid)
+    val enabled = new Fixture(warehousesEnabled = true)
+    enabled.expiry.dropAll(execution.eid)
     (producedBy(execution) ++ keptBy(execution)).foreach { uri =>
       withClue(s"$uri: ") { has(uri) shouldBe false }
     }
+    hasNamespace(execution) shouldBe false
+    enabled.revoked shouldBe Seq(execution.eid)
   }
 
   it should "do nothing for an execution with no row" in {
@@ -1121,6 +1179,7 @@ class ExecutionExpirySpec
     logged { fixture.expiry.dropAll(986999L) } shouldBe Nil
 
     fixture.binariesDeleted shouldBe Nil
+    fixture.revoked shouldBe Nil
   }
 
   it should "throw what fails, for the caller to keep the row" in {

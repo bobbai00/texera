@@ -21,6 +21,7 @@ package org.apache.texera.amber.engine.architecture.scheduling.config
 
 import org.apache.texera.common.config.ApplicationConfig
 import org.apache.texera.amber.core.executor.OpExecInitInfo
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ChannelIdentity,
@@ -335,5 +336,61 @@ class SchedulingConfigsSpec extends AnyFlatSpec {
     // An operator that asks for none runs its workers in the engine's own.
     assert(WorkerConfig.generateWorkerConfigs(op).map(_.pythonEnvironment) == List.fill(3)(None))
     assert(WorkerConfig(actor("w")).pythonEnvironment.isEmpty)
+  }
+
+  it should "give every worker its operator's execution and the token this unit holds for it" in {
+    val eid = ExecutionIdentity(9641001L)
+    CatalogIdentity.register(eid.id, "token-of-execution-9641001")
+
+    val configs = WorkerConfig.generateWorkerConfigs(
+      physicalOp(parallelizable = true, suggested = Some(3), executionId = eid)
+    )
+
+    assert(configs.map(_.executionId) == List.fill(3)(eid))
+    assert(configs.map(_.catalogToken) == List.fill(3)(CatalogToken("token-of-execution-9641001")))
+  }
+
+  it should "give no token to the workers of an execution this unit holds none for" in {
+    val eid = ExecutionIdentity(9641002L)
+
+    val configs = WorkerConfig.generateWorkerConfigs(
+      physicalOp(parallelizable = true, suggested = Some(2), executionId = eid)
+    )
+
+    assert(configs.map(_.executionId) == List.fill(2)(eid))
+    assert(configs.map(_.catalogToken) == List.fill(2)(CatalogToken.None))
+    assert(WorkerConfig(actor("w")).catalogToken == CatalogToken.None)
+  }
+
+  // ---------------------------------------------------------------------------
+  // CatalogToken, and a worker holding it
+  // ---------------------------------------------------------------------------
+
+  "CatalogToken" should "never print its value, nor a worker's configuration that holds it" in {
+    val token = CatalogToken("eyJhbGciOiJFUzI1NiJ9.e30.c2lnbmVk")
+    val config = WorkerConfig(actor("w"), catalogToken = token)
+
+    assert(token.toString == "CatalogToken(<hidden>)")
+    assert(CatalogToken.None.toString == "CatalogToken()")
+    assert(!config.toString.contains(token.value))
+    assert(config.toString.contains("CatalogToken(<hidden>)"))
+  }
+
+  "WorkerConfig.holdCatalogToken" should "hold the worker's token in this JVM, for its execution" in {
+    val eid = ExecutionIdentity(9641003L)
+    assert(CatalogIdentity.registered(eid.id).isEmpty)
+
+    WorkerConfig(actor("w"), executionId = eid, catalogToken = CatalogToken("t-9641003"))
+      .holdCatalogToken()
+
+    assert(CatalogIdentity.registered(eid.id).contains("t-9641003"))
+  }
+
+  it should "hold nothing for a worker given no token" in {
+    val eid = ExecutionIdentity(9641004L)
+
+    WorkerConfig(actor("w"), executionId = eid).holdCatalogToken()
+
+    assert(CatalogIdentity.registered(eid.id).isEmpty)
   }
 }

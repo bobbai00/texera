@@ -32,6 +32,7 @@ import org.apache.texera.service.AccessControlServiceRunSpec.SpecPayload
 import org.apache.texera.service.activity.UserActivityEventListener
 import org.apache.texera.service.resource.{
   AccessControlResource,
+  CatalogIssuerResource,
   HealthCheckResource,
   LiteLLMModelsResource,
   LiteLLMProxyResource
@@ -50,7 +51,8 @@ import scala.util.{Try, Using}
 
 class AccessControlServiceRunSpec extends AnyFlatSpec with Matchers {
 
-  "AccessControlService.run" should "register UserActivityEventListener on the Jersey environment" in {
+  /** One `run` against mocked Dropwizard wiring, answering the Jersey environment it used. */
+  private def run(): JerseyEnvironment = {
     val jersey = mock(classOf[JerseyEnvironment])
     val servlets = mock(classOf[ServletEnvironment])
     val context = mock(classOf[MutableServletContextHandler])
@@ -62,12 +64,22 @@ class AccessControlServiceRunSpec extends AnyFlatSpec with Matchers {
 
     val service = new AccessControlService
     service.run(mock(classOf[AccessControlServiceConfiguration]), env)
+    jersey
+  }
+
+  "AccessControlService.run" should "register UserActivityEventListener on the Jersey environment" in {
+    val jersey = run()
 
     verify(jersey).register(isA(classOf[UserActivityEventListener]))
     verify(jersey).register(classOf[UnauthorizedExceptionMapper])
     // Without this feature Jersey ignores @RolesAllowed on the LiteLLM proxies.
     verify(jersey).register(classOf[RolesAllowedDynamicFeature])
     verify(jersey).setUrlPattern("/api/*")
+  }
+
+  it should "publish the key the catalog checks Texera's catalog tokens with" in {
+    // Lakekeeper reads it from this service when it starts, and refuses to start without it.
+    verify(run()).register(classOf[CatalogIssuerResource])
   }
 
   // Every endpoint this service registers declares @RolesAllowed/@PermitAll/@DenyAll.
@@ -77,6 +89,7 @@ class AccessControlServiceRunSpec extends AnyFlatSpec with Matchers {
         classOf[AccessControlResource],
         classOf[LiteLLMProxyResource],
         classOf[LiteLLMModelsResource],
+        classOf[CatalogIssuerResource],
         classOf[HealthCheckResource]
       )
     ) shouldBe empty

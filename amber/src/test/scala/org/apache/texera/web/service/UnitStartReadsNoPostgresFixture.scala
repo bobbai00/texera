@@ -24,8 +24,10 @@ import org.apache.pekko.actor.{ActorSystem, Props}
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.storage.{
+  CatalogIdentity,
   DocumentFactory,
   ExecutionLogStore,
+  ExecutionNamespace,
   IcebergCatalogInstance
 }
 import org.apache.texera.amber.core.storage.model.VirtualDocument
@@ -74,12 +76,18 @@ import org.apache.texera.web.model.websocket.event.{
   WorkflowErrorEvent,
   WorkflowStateEvent
 }
+import org.apache.texera.web.resource.{
+  CallerHeaders,
+  ExecutionHandoverResource,
+  StartExecutionRequest
+}
 import org.apache.texera.web.service.execution.{
   CostHintsLoader,
   CreatedExecution,
   ExecutionCreator,
   ExecutionExpiry,
   FixtureCompilingService,
+  RecordingCatalogAccess,
   RecordingComputingUnits
 }
 import org.scalatest.BeforeAndAfterAll
@@ -100,13 +108,15 @@ import scala.util.Try
   * run without a statement to Postgres, and keeps the run's record in the lake.
   *
   * An execution is created as the Dashboard service creates one (`ExecutionCreator`): its row is
-  * inserted, and its plan is compiled for its creator and handed over. It is then started with
-  * that plan as a computing unit starts what it is handed (`WorkflowService.checkStart`, then
-  * `startChecked`), on a workflow service that a session is connected to, and runs to its end on
-  * an engine of this suite's actor system. Every statement the unit
+  * inserted, its plan is compiled for its creator, its namespace is made with a token for it
+  * (`RecordingCatalogAccess`, which reaches no Lakekeeper), and the plan is handed over with the
+  * token. It is then started with that plan and that token as a computing unit starts what it is
+  * handed (`ExecutionHandoverResource.start`), on a workflow service that a session is connected
+  * to, and runs to its end on an engine of this suite's actor system. Every statement the unit
   * sends through jOOQ, from any thread, is recorded from the start until the session has been
   * sent the results of the completed run, which is the last thing a unit does for a run. The
-  * run's record is kept in the lake as a unit keeps it, in the same catalog.
+  * run's record is kept in the lake as a unit keeps it, in the execution's namespace of the same
+  * catalog.
   *
   * A plan is bound to the fixtures (`TestUtils.fixtureBindings`), unless a suite binds it
   * otherwise: the files it reads are fixture files, which the Dashboard links to the fixture
@@ -219,8 +229,15 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     override def load(wid: Long, uid: Int): Option[CostHints] = None
   }
 
+  /** The Dashboard's access to the lake: each execution's namespace, and a token for it. */
+  private val catalogAccess = new RecordingCatalogAccess()
+
   /** The Dashboard's expiry, which deletes no large binary: the suite's runs write none. */
-  private val expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
+  private val expiry = new ExecutionExpiry(
+    warehousesEnabled = false,
+    deleteBinaries = _ => (),
+    access = catalogAccess
+  )
 
   /** The units' side of the Dashboard's create: each plan handed over, for the suite's unit. */
   private val handedOver = new RecordingComputingUnits()
@@ -235,7 +252,8 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
         warehousesEnabled = false,
         costHints = NoHints,
         background = _.run(),
-        expiry = expiry
+        expiry = expiry,
+        access = catalogAccess
       )
 
   /**
@@ -357,8 +375,8 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
 
   /**
     * Creates an execution of the workflow of `operators` and `links` at the Dashboard, for the
-    * creator, then starts it on the unit from the plan the Dashboard handed over and waits for
-    * its run to end.
+    * creator, then starts it on the unit from the plan and the token the Dashboard handed over,
+    * and waits for its run to end. The unit holds the token for the execution from its start.
     */
   protected def run(operators: List[LogicalOp], links: List[LogicalLink]): Run = {
     val execution = handedOver.created(
@@ -379,19 +397,27 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
       )
     )
     created += execution
+    val handed = handedOver
+      .startOf(execution.eid)
+      .getOrElse(fail(s"no plan was handed over for execution ${execution.eid}"))
+    val token = handed.catalogToken.getOrElse(fail("the plan was handed over with no token"))
 
     val service = unitWorkflowService()
+    val unit = new ExecutionHandoverResource((_, _) => service, _ => None)
     val session = new Session
     val subscriptions =
       Seq(service.connect(session.receive), service.connectToExecution(session.receive))
     try {
       val statements = recorder.record {
-        WorkflowService
-          .checkStart(execution.plan, creator, unitCuid)
-          .flatMap(service.startChecked)
-          .left
-          .foreach(why => fail(s"the start was refused: $why"))
+        val answer = unit.start(
+          StartExecutionRequest(handed.text, handed.cuid, token),
+          CallerHeaders.of(handed.uid)
+        )
+        if (answer.getStatus != 204) fail(s"the start was refused: ${answer.getEntity}")
         Await.result(session.ended, 3.minutes)
+      }
+      withClue("the token the unit holds for the execution: ") {
+        CatalogIdentity.registered(execution.eid) shouldBe Some(token)
       }
       val recorded =
         service.executionService.getValue.executionStateStore.recorder.awaitIdle(1.minute)
@@ -407,8 +433,8 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
 
   /**
     * Fails unless the lake holds the log of `run`: a row for each state the run was in, in
-    * order, with the label of the last, in a table tidied at the run's end, of one data file
-    * and one snapshot.
+    * order, with the label of the last, in a table of the execution's namespace tidied at the
+    * run's end, of one data file and one snapshot.
     */
   protected def assertLogged(run: Run): Unit = {
     val logUri = logUriOf(run.execution)
@@ -424,13 +450,11 @@ abstract class UnitStartReadsNoPostgresFixture(actorSystemName: String)
     (label.state, label.stateSeq, label.stateTimeMs, label.reason, label.ended) shouldBe
       ((Some("COMPLETED"), 3L, rows.last.timeMs, None, true))
     label.beatEveryMs shouldBe StorageConfig.icebergTableCommitIntervalMs
+    val eid = run.execution.eid
     val table = IcebergCatalogInstance
-      .getInstance()
+      .getInstance(execution = Some(eid))
       .loadTable(
-        TableIdentifier.of(
-          StorageConfig.icebergTableExecutionLogNamespace,
-          s"wid_${wid}_eid_${run.execution.eid}_executionlog"
-        )
+        TableIdentifier.of(ExecutionNamespace.of(eid), s"wid_${wid}_eid_${eid}_executionlog")
       )
     table.snapshots().asScala should have size 1
     table.currentSnapshot().summary().get("total-data-files") shouldBe "1"

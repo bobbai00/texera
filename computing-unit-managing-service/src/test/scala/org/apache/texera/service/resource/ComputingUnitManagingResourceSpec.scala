@@ -652,6 +652,17 @@ class ComputingUnitManagingResourceSpec
     requiredEnvNames.foreach(name => env(name) shouldBe s"value-$name")
   }
 
+  // The services' own key reaches every bucket, the lake's tables among them; a unit's reaches
+  // only the large-binaries bucket, and the lake only through the catalog.
+  it should "give a unit the object store's key for units, not this service's own" in {
+    val env = ComputingUnitManagingResource.computingUnitEnvironment(deployed)
+
+    // This test JVM is given a key for units of its own (build.sbt), unlike the services' key.
+    StorageConfig.s3UnitUsername should not be StorageConfig.s3Username
+    env(EnvironmentalVariable.ENV_S3_AUTH_USERNAME) shouldBe "texera-unit-in-tests"
+    env(EnvironmentalVariable.ENV_S3_AUTH_PASSWORD) shouldBe "unit-password-in-tests"
+  }
+
   it should "forward no setting that nothing on a unit reads: where results are uploaded, and LakeFS" in {
     val env = ComputingUnitManagingResource.computingUnitEnvironment(deployed)
 

@@ -37,6 +37,7 @@ spec:
       {{- end }}      
       serviceAccountName: {{ .Values.workflowComputingUnitManager.serviceAccountName }}
       initContainers:
+        # /health answers without a token; every other Lakekeeper route needs one.
         - name: wait-lakekeeper
           image: curlimages/curl:8.22.0
           command:
@@ -45,16 +46,11 @@ spec:
             - |
               set -e
               LAKEKEEPER_BASE_URI="http://{{ .Release.Name }}-lakekeeper:{{ .Values.lakekeeper.catalog.service.externalPort }}"
-              WAREHOUSE_NAME="{{ .Values.lakekeeperInit.warehouse.name }}"
               echo "Waiting for Lakekeeper to become healthy..."
               until curl -s -f "${LAKEKEEPER_BASE_URI}/health" > /dev/null 2>&1; do
                 sleep 1
               done
-              echo "Waiting for warehouse '${WAREHOUSE_NAME}' to exist..."
-              until curl -s "${LAKEKEEPER_BASE_URI}/management/v1/warehouse" | grep -q "\"name\"[[:space:]]*:[[:space:]]*\"${WAREHOUSE_NAME}\""; do
-                sleep 1
-              done
-              echo "Lakekeeper warehouse is ready."
+              echo "Lakekeeper is healthy."
       containers:
         - name: {{ .Values.workflowComputingUnitManager.name }}
           image: {{ .Values.texera.imageRegistry }}/{{ .Values.workflowComputingUnitManager.imageName }}:{{ .Values.texera.imageTag }}
@@ -124,6 +120,14 @@ spec:
                 secretKeyRef:
                   name: {{ include "texera.s3.secretName" . }}
                   key: {{ include "texera.s3.secretAccessKeyKey" . }}
+            {{- if .Values.storage.s3.unitAccessKeyId }}
+            # The key this service gives each unit it creates: one that reaches only the
+            # large-binaries bucket.
+            - name: STORAGE_S3_UNIT_AUTH_USERNAME
+              value: {{ .Values.storage.s3.unitAccessKeyId | quote }}
+            - name: STORAGE_S3_UNIT_AUTH_PASSWORD
+              value: {{ .Values.storage.s3.unitSecretAccessKey | quote }}
+            {{- end }}
             # Workflow Result
             - name: STORAGE_ICEBERG_CATALOG_TYPE
               value: rest
@@ -131,8 +135,6 @@ spec:
               value: http://{{ .Release.Name }}-lakekeeper:{{ .Values.lakekeeper.catalog.service.externalPort }}/catalog
             - name: STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME
               value: {{ .Values.lakekeeperInit.warehouse.name | quote }}
-            - name: STORAGE_ICEBERG_CATALOG_REST_REGION
-              value: {{ .Values.lakekeeperInit.warehouse.region | quote }}
             - name: STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET
               value: {{ .Values.lakekeeperInit.warehouse.s3Bucket | quote }}
             {{- range .Values.texeraEnvVars }}

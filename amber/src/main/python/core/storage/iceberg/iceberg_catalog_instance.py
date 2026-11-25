@@ -30,6 +30,9 @@ class IcebergCatalogInstance:
     Manages Iceberg catalog instances, cached per warehouse.
     - REST catalogs are keyed by warehouse so one process can read/write tables in
       many warehouses (Design 2, warehouse-per-execution).
+    - Every REST catalog carries StorageConfig.ICEBERG_REST_CATALOG_TOKEN, the
+      token of the one execution this process serves, so the warehouse alone
+      keys the cache.
     - The postgres catalog has no warehouse concept and shares a single entry.
     - Catalogs are lazily created on first access; entries can be replaced for
       testing or reconfiguration.
@@ -66,6 +69,7 @@ class IcebergCatalogInstance:
                     "texera_iceberg",
                     key,
                     StorageConfig.ICEBERG_REST_CATALOG_URI,
+                    token=StorageConfig.ICEBERG_REST_CATALOG_TOKEN,
                 )
             return cls._catalogs[key]
         else:

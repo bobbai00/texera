@@ -30,7 +30,7 @@ import org.apache.texera.dao.jooq.generated.Tables.{USER, USER_WAREHOUSE}
 import org.apache.texera.dao.jooq.generated.enums.UserWarehouseFlavorEnum
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.resource.dashboard.user.warehouse.WarehouseResource._
-import org.apache.texera.web.service.LakekeeperClient
+import org.apache.texera.web.service.{CatalogSetup, LakekeeperClient}
 import org.jooq.{DSLContext, Field, Record}
 import org.jooq.impl.DSL
 
@@ -123,15 +123,22 @@ object WarehouseResource {
   * Everything except `/status` is gated by the warehouse feature flag; the mutating
   * endpoints return 403 while it is off. `/status` always answers so the frontend can
   * decide whether to show the feature at all.
+  *
+  * @param setup makes the catalog ready, before a warehouse is made in its default project
+  *              ([[CatalogSetup]])
   */
 @Path("/warehouse")
 @Produces(Array(MediaType.APPLICATION_JSON))
-class WarehouseResource(client: LakekeeperClient, enabled: Boolean) extends LazyLogging {
+class WarehouseResource(
+    client: LakekeeperClient,
+    enabled: Boolean,
+    setup: () => Unit = () => CatalogSetup.ensure()
+) extends LazyLogging {
 
   // Jersey builds the resource through this constructor. The flag is captured once,
   // which is equivalent to reading it per call: storage.conf is resolved at class load
   // and never changes at runtime.
-  def this() = this(new LakekeeperClient(), StorageConfig.warehouseEnabled)
+  def this() = this(LakekeeperClient.forDeployment, StorageConfig.warehouseEnabled)
 
   @GET
   @Path("/status")
@@ -189,6 +196,7 @@ class WarehouseResource(client: LakekeeperClient, enabled: Boolean) extends Lazy
     // Create in Lakekeeper first, record after: a failed creation leaves no orphaned row.
     val lakekeeperWarehouseId =
       try {
+        setup()
         client.createWarehouse(mintedName)
       } catch {
         case e: Exception =>

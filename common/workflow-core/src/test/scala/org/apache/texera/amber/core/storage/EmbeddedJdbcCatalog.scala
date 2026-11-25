@@ -25,8 +25,10 @@ import org.apache.iceberg.exceptions.ServiceUnavailableException
 import org.apache.iceberg.inmemory.InMemoryFileIO
 import org.apache.iceberg.jdbc.JdbcCatalog
 import org.apache.iceberg.{CatalogProperties, Table}
+import org.apache.texera.amber.util.IcebergUtil
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
+import java.net.URI
 import scala.jdk.CollectionConverters._
 
 /**
@@ -35,6 +37,10 @@ import scala.jdk.CollectionConverters._
   * leaves nothing behind. Data and metadata files are kept in memory, since what the stores
   * under test rely on (a commit that lands whole or not at all, and that refuses a second ref
   * of one name) is the catalog's doing, not the file system's.
+  *
+  * The catalog is strict, as Lakekeeper is: it refuses a table in a namespace that is not
+  * there. The engine makes no namespace, so a spec makes the namespace of each execution it
+  * writes ([[withNamespace]]), as the Dashboard service does before the execution starts.
   *
   * A suite that mixes this in is tagged `@NonParallelTest`, so that
   * `common/workflow-core/build.sbt` gives it its own forked JVM. That is load-bearing:
@@ -62,7 +68,8 @@ trait EmbeddedJdbcCatalog extends BeforeAndAfterAll { this: Suite =>
         CatalogProperties.FILE_IO_IMPL -> classOf[InMemoryFileIO].getName,
         CatalogProperties.URI -> postgres.getJdbcUrl("postgres", "postgres"),
         JdbcCatalog.PROPERTY_PREFIX + "user" -> "postgres",
-        JdbcCatalog.PROPERTY_PREFIX + "password" -> ""
+        JdbcCatalog.PROPERTY_PREFIX + "password" -> "",
+        JdbcCatalog.PROPERTY_PREFIX + "strict-mode" -> "true"
       ).asJava
     )
     // The default warehouse and the one the warehouse-scoped URIs name: two cache entries under
@@ -76,6 +83,22 @@ trait EmbeddedJdbcCatalog extends BeforeAndAfterAll { this: Suite =>
       Option(catalog).foreach(_.close())
       Option(postgres).foreach(_.close())
     } finally super.afterAll()
+
+  /** The suite's catalog. */
+  protected def jdbcCatalog: JdbcCatalog = catalog
+
+  /**
+    * Makes the namespace of the execution `uri` is of, in the warehouse it names, unless it is
+    * there, and gives `uri` back.
+    */
+  protected def withNamespace(uri: URI): URI = {
+    val components = VFSURIFactory.decodeURI(uri)
+    IcebergUtil.createNamespace(
+      IcebergCatalogInstance.getInstance(components.warehouse),
+      ExecutionNamespace.of(components.executionId.id)
+    )
+    uri
+  }
 
   /** A catalog that fails every call, the way a REST catalog that cannot answer does. */
   private object UnavailableCatalog extends Catalog {

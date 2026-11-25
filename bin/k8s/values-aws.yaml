@@ -44,6 +44,11 @@ storage:
     existingSecret: ""
     accessKeyId: "REPLACE_WITH_ACCESS_KEY_ID"
     secretAccessKey: "REPLACE_WITH_SECRET_ACCESS_KEY"
+    # The computing units' own key. No job makes it on AWS: to keep units off the lake's
+    # bucket, create an IAM user whose policy reaches only the large-binaries bucket and put its
+    # key here. Empty, units get the key above.
+    unitAccessKeyId: ""
+    unitSecretAccessKey: ""
 
 # Point LakeFS at external S3: a region-only blockstore (the AWS SDK resolves
 # the endpoint from the region) with credentials injected via the same Secret
@@ -75,12 +80,10 @@ lakefs:
           name: texera-s3-credentials
           key: secret-access-key
 
-# Lakekeeper Iceberg warehouse on external S3: skip bucket creation (the bucket
-# pre-exists and the IAM principal may lack CreateBucket) and use the native
-# AWS S3 storage-profile flavor (no custom endpoint / path-style access).
+# Lakekeeper Iceberg warehouses on external S3: skip bucket creation (the bucket
+# pre-exists and the IAM principal may lack CreateBucket). The Dashboard service
+# registers the warehouses in storage.s3's endpoint and region above.
 lakekeeperInit:
   createBucket: false
   warehouse:
-    region: us-west-2
     s3Bucket: texera-iceberg
-    flavor: aws

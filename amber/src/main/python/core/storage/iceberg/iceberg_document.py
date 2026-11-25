@@ -88,7 +88,9 @@ class IcebergDocument(VirtualDocument[T]):
         with self.lock.gen_wlock():
             table_identifier = f"{self.table_namespace}.{self.table_name}"
             if self.catalog.table_exists(table_identifier):
-                self.catalog.drop_table(table_identifier)
+                # Purged, as every drop is: the files of a table no catalog names are
+                # never deleted.
+                self.catalog.purge_table(table_identifier)
 
     def get(self) -> Iterator[T]:
         """Get an iterator for reading all records from the table."""

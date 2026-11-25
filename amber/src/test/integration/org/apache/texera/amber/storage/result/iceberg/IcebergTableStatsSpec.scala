@@ -29,6 +29,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.tags.IntegrationTest
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, Suite}
@@ -60,6 +61,8 @@ class IcebergTableStatsSpec extends AnyFlatSpec with BeforeAndAfterAll with Suit
 
   override def beforeAll(): Unit = {
     super.beforeAll()
+    // The namespace of the execution the table is of, as the Dashboard service makes it.
+    TestUtils.makeExecutionNamespace(0L)
 
     // Initialize Amber Schema with all possible attribute types
     amberSchema = Schema(

@@ -29,6 +29,7 @@ import io.dropwizard.jackson.Jackson
 import io.dropwizard.jersey.validation.Validators
 import io.dropwizard.lifecycle.JettyManaged
 import io.dropwizard.setup.{Bootstrap, Environment}
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.auth.JwtAuth
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.SqlServer
@@ -132,6 +133,22 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
   /** The name the server recorded for that pool's connections, read at the same moment. */
   private var pooledApplicationName: Option[String] = None
 
+  /** Who `run()` left this JVM to the lake's catalog, read before it is put back. */
+  private var identityAfterRun: Option[CatalogIdentity.Mode] = None
+
+  /**
+    * Runs `application` in `environment`. `run()` makes this JVM the platform to the lake's catalog
+    * (`CatalogIdentity.use(Platform)`), and amber's suites share one JVM, so the identity it found
+    * is put back afterwards.
+    */
+  private def runApplication(application: TexeraWebApplication, environment: Environment): Unit = {
+    val identity = CatalogIdentity.mode
+    try {
+      application.run(new TexeraWebConfiguration, environment)
+      identityAfterRun = Some(CatalogIdentity.mode)
+    } finally CatalogIdentity.use(identity)
+  }
+
   /**
     * The environment left behind by a single full `run()`, shared by every assertion below so the
     * admin-user bootstrap and the operator-metadata warmup happen once.
@@ -146,7 +163,7 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     val environment = newEnvironment()
     val priorContext = Try(SqlServer.getInstance().createDSLContext()).toOption
     try {
-      new TexeraWebApplication().run(new TexeraWebConfiguration, environment)
+      runApplication(new TexeraWebApplication(), environment)
       pooledJdbcUrl = Try(
         SqlServer
           .getInstance()
@@ -318,6 +335,15 @@ class TexeraWebApplicationSpec extends AnyFlatSpec with Matchers {
     )
     ranEnvironment
     pooledJdbcUrl shouldBe Some(StorageConfig.jdbcUrl)
+  }
+
+  it should "make this JVM the platform to the lake's catalog: its requests carry the platform's token" in {
+    assume(
+      databaseReachable,
+      "run() requires a reachable Postgres at the configured JDBC URL (provided in CI)"
+    )
+    ranEnvironment
+    identityAfterRun shouldBe Some(CatalogIdentity.Platform)
   }
 
   it should "name its database connections after the Dashboard service" in {

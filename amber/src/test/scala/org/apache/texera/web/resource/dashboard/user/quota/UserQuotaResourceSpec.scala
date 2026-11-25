@@ -19,10 +19,13 @@
 
 package org.apache.texera.web.resource.dashboard.user.quota
 
+import org.apache.iceberg.catalog.{Namespace, SupportsNamespaces}
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionLogStore,
+  ExecutionNamespace,
   ExecutionTables,
+  IcebergCatalogInstance,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
@@ -33,6 +36,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables._
@@ -55,7 +59,11 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
   WorkflowUserAccess,
   WorkflowVersion
 }
-import org.apache.texera.web.service.execution.ExecutionExpiry
+import org.apache.texera.web.service.execution.{
+  ExecutionCatalogAccess,
+  ExecutionExpiry,
+  RecordingCatalogAccess
+}
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 
@@ -86,10 +94,17 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
   /** The executions whose large binaries a delete would have deleted: none is, in this suite. */
   private val binariesDeletedFor = new ConcurrentLinkedQueue[Long]()
 
+  /**
+    * What a delete drops of the executions' namespaces, in the catalog the build's tests use,
+    * with what it ends of their tokens kept, as on a REST catalog.
+    */
+  private val catalogAccess = new RecordingCatalogAccess()
+
   /** An expiry whose lake calls are the stores', and which deletes no large binary. */
   private val expiry = new ExecutionExpiry(
     warehousesEnabled = false,
-    deleteBinaries = eid => binariesDeletedFor.add(eid)
+    deleteBinaries = eid => binariesDeletedFor.add(eid),
+    access = catalogAccess
   )
   private val resource = new UserQuotaResource(expiry)
 
@@ -354,10 +369,14 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     execution
   }
 
-  /** Gives `execution` a log table and the result table of a port, and returns them. */
+  /**
+    * Gives `execution` a log table and the result table of a port, in its namespace, as the
+    * Dashboard service makes it, and returns them.
+    */
   private def storeTablesOf(execution: WorkflowExecutions): Seq[URI] = {
     val (wid, eid) =
       (WorkflowIdentity(testWid.toLong), ExecutionIdentity(execution.getEid.longValue()))
+    TestUtils.makeExecutionNamespace(eid.id)
     val logUri = ExecutionLogStore.logUri(wid, eid, None)
     ExecutionLogStore.create(logUri, System.currentTimeMillis(), 30000L)
     val result = VFSURIFactory.resultURI(
@@ -380,7 +399,7 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     assert(workflowExecutionsDao.fetchOneByEid(execution.getEid) == null)
   }
 
-  it should "drop every table of the execution, with its large binaries" in {
+  it should "drop every table of the execution, with its namespace, its token's rights and its large binaries" in {
     resetFixtures()
     val execution = insertClosedExecution()
     val tables = storeTablesOf(execution)
@@ -389,6 +408,16 @@ class UserQuotaResourceSpec extends AnyFlatSpec with BeforeAndAfterAll with Mock
     UserQuotaResource.deleteExecutionCollection(execution.getEid, expiry)
 
     tables.foreach(uri => assert(!ExecutionTables.exists(uri), uri))
+    assert(
+      !IcebergCatalogInstance
+        .getInstance()
+        .asInstanceOf[SupportsNamespaces]
+        .namespaceExists(Namespace.of(ExecutionNamespace.of(execution.getEid.longValue())))
+    )
+    assert(
+      catalogAccess.management.deleted
+        .contains(ExecutionCatalogAccess.userOf(execution.getEid.longValue()))
+    )
     assert(binariesDeletedFor.asScala.toSeq == Seq(execution.getEid.longValue()))
   }
 

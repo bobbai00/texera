@@ -20,8 +20,10 @@
 package org.apache.texera.web.resource
 
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.amber.core.virtualidentity.WorkflowIdentity
 import org.apache.texera.amber.core.workflow.PhysicalPlanCodec
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.web.service.execution.ExecutionStart
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
 
@@ -36,8 +38,16 @@ import scala.util.control.NonFatal
   * @param plan            the execution's plan, as the Dashboard service made it: it names the
   *                        execution and its workflow
   * @param computingUnitId the computing unit the execution was created for: this one
+  * @param catalogToken    the execution's token for the lake's catalog, which every catalog
+  *                        request about the execution carries; null where the lake takes none
   */
-case class StartExecutionRequest(plan: String, computingUnitId: Int)
+case class StartExecutionRequest(plan: String, computingUnitId: Int, catalogToken: String) {
+
+  // Printed with neither its plan, which links to the execution's inputs, nor its token.
+  override def toString: String =
+    s"StartExecutionRequest(<plan>, $computingUnitId, " +
+      s"${if (catalogToken == null) "null" else "<hidden>"})"
+}
 
 /**
   * The body of `POST /api/execution/update`: apply, when the paused run of an execution resumes,
@@ -52,8 +62,9 @@ case class HandoverRefusal(message: String)
 
 /**
   * What the Dashboard service hands a computing unit: the start of an execution, from its plan,
-  * and a change to an operator of a paused one. Each names the user it is for ([[UnitCaller]]).
-  * No client reaches these routes: a deployment routes only the unit's websocket to it.
+  * with the execution's token for the lake, and a change to an operator of a paused one. Each
+  * names the user it is for ([[UnitCaller]]). No client reaches these routes: a deployment
+  * routes only the unit's websocket to it.
   *
   * What is handed over and done is answered 204; what is refused, 409 with why
   * ([[HandoverRefusal]]), and nothing is written for it. A request that names no user is
@@ -63,13 +74,16 @@ case class HandoverRefusal(message: String)
   *                          the one the workflow's sessions share
   * @param holding           the run of an execution, with the service of its workflow, when this
   *                          unit holds it
+  * @param tokenRequired     whether a start must carry its execution's token for the lake: so
+  *                          on a REST catalog, which answers no request without one
   */
 @Path("/execution")
 @Consumes(Array(MediaType.APPLICATION_JSON))
 @Produces(Array(MediaType.APPLICATION_JSON))
 class ExecutionHandoverResource(
     workflowServiceOf: (WorkflowIdentity, Int) => WorkflowService,
-    holding: Long => Option[(WorkflowService, WorkflowExecutionService)]
+    holding: Long => Option[(WorkflowService, WorkflowExecutionService)],
+    tokenRequired: Boolean = StorageConfig.icebergCatalogType == "rest"
 ) extends LazyLogging {
 
   // No-arg constructor for Jersey reflection. Tests use the param-ful form.
@@ -81,8 +95,9 @@ class ExecutionHandoverResource(
     * however often it is handed over.
     *
     * The start is checked ([[WorkflowService.checkStart]]) before the workflow's service is
-    * asked for, so a start its checks refuse leaves no service behind; then it is started on
-    * that service ([[WorkflowService.startChecked]]).
+    * asked for, so a start its checks refuse leaves no service behind. Then the token it carries
+    * is held for its execution (`holdToken`), and it is started on that service
+    * ([[WorkflowService.startChecked]]).
     *
     * @return 204 once the start is taken, also for a run that then fails: its failure is the
     *         run's, recorded and shown to its sessions. Otherwise 409 with why.
@@ -97,6 +112,7 @@ class ExecutionHandoverResource(
         for {
           asked <- Option(request).toRight("The request has no body.")
           checked <- WorkflowService.checkStart(asked.plan, user, asked.computingUnitId)
+          _ <- holdToken(checked.executionId, asked.catalogToken)
           run <- workflowServiceOf(checked.workflowId, asked.computingUnitId).startChecked(checked)
         } yield run
       } catch {
@@ -109,6 +125,22 @@ class ExecutionHandoverResource(
       }
     answer("start an execution", started)
   }
+
+  /**
+    * Holds `token`, the token a start of execution `eid` carries, in this JVM: every catalog
+    * request about the execution made here carries it, and the execution's workers are handed
+    * it ([[CatalogIdentity]]). An execution keeps the token it was first started with: a later
+    * start of it, which the unit refuses as already started, changes nothing. A start that
+    * carries none is refused where a token is required.
+    */
+  private def holdToken(eid: Long, token: String): Either[String, Unit] =
+    Option(token).filterNot(_.isBlank) match {
+      case Some(held) =>
+        if (CatalogIdentity.registered(eid).isEmpty) CatalogIdentity.register(eid, held)
+        Right(())
+      case None if tokenRequired => Left("The start carries no token for the lake.")
+      case None                  => Right(())
+    }
 
   /**
     * Queues the change the request carries for the run of the execution it names, which applies

@@ -28,6 +28,7 @@ import org.apache.texera.dao.SqlServer
 import org.apache.texera.service.activity.UserActivityEventListener
 import org.apache.texera.service.resource.{
   AccessControlResource,
+  CatalogIssuerResource,
   ComputingUnitMountResource,
   HealthCheckResource,
   LiteLLMModelsResource,
@@ -73,6 +74,7 @@ class AccessControlService extends Application[AccessControlServiceConfiguration
     environment.jersey.register(classOf[LiteLLMProxyResource])
     environment.jersey.register(classOf[LiteLLMModelsResource])
     environment.jersey.register(classOf[ComputingUnitMountResource])
+    environment.jersey.register(classOf[CatalogIssuerResource])
 
     AuthFeatures.register(environment)
 

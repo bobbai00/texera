@@ -133,24 +133,36 @@ class ComputingUnitClientSpec extends AnyFlatSpec with Matchers {
   // --- what it sends ---
 
   "HttpComputingUnitClient.start" should
-    "post the plan to the unit's start route, for the user and with no token, and take a 204 as the plan taken" in {
+    "post the plan and the execution's catalog token to the unit's start route, for the user and with no token to verify, and take a 204 as the plan taken" in {
     val plan = """{"formatVersion": 1, "executionId": {"id": "345"}, "operators": []}"""
     Using.resource(new StubUnit(204)) { unit =>
       val client = new ClientOf(unit.address)
 
-      client.start(7, plan, uid) shouldBe Taken
+      client.start(7, plan, uid, Some("the-catalog-token-of-345")) shouldBe Taken
 
       // The unit asked is the one found at the address of the unit the plan is for.
       client.lookedUp.toList shouldBe List(7)
-      // The user is named by id. No token goes to a unit, which could verify none.
+      // The user is named by id. No token goes to a unit to verify, which could verify none.
       unit.requests.map(sent =>
         (sent.method, sent.path, sent.userId, sent.authorization, sent.contentType)
       ) shouldBe List(("POST", "/api/execution/start", "4711", null, "application/json"))
-      // The plan as one JSON string, and the unit it is for, as the route reads them.
+      // The plan as one JSON string, the unit it is for, and the token the execution's catalog
+      // requests carry, as the route reads them.
       val body = unit.requests.head.body
-      body.fieldNames().asScala.toSet shouldBe Set("plan", "computingUnitId")
+      body.fieldNames().asScala.toSet shouldBe Set("plan", "computingUnitId", "catalogToken")
       body.get("plan").asText() shouldBe plan
       body.get("computingUnitId").asInt() shouldBe 7
+      body.get("catalogToken").asText() shouldBe "the-catalog-token-of-345"
+    }
+  }
+
+  it should "send a null catalog token for a catalog that takes none" in {
+    Using.resource(new StubUnit(204)) { unit =>
+      new ClientOf(unit.address).start(7, "{}", uid, None) shouldBe Taken
+
+      val body = unit.requests.head.body
+      body.fieldNames().asScala.toSet shouldBe Set("plan", "computingUnitId", "catalogToken")
+      body.get("catalogToken").isNull shouldBe true
     }
   }
 
@@ -177,7 +189,7 @@ class ComputingUnitClientSpec extends AnyFlatSpec with Matchers {
   /** What a hand-over to a unit that answers `status` with `body` comes to. */
   private def answered(status: Int, body: String = ""): Handover =
     Using.resource(new StubUnit(status, body)) { unit =>
-      new ClientOf(unit.address).start(7, "{}", uid)
+      new ClientOf(unit.address).start(7, "{}", uid, None)
     }
 
   "A hand-over" should "be taken when the unit answers any 2xx" in {
@@ -221,7 +233,7 @@ class ComputingUnitClientSpec extends AnyFlatSpec with Matchers {
 
   it should "be left unanswered when the unit does not answer by the deadline" in {
     Using.resource(new StubUnit(204, delay = 3.seconds)) { unit =>
-      new ClientOf(unit.address, deadline = 300.millis).start(7, "{}", uid) match {
+      new ClientOf(unit.address, deadline = 300.millis).start(7, "{}", uid, None) match {
         case Unanswered(late) =>
           late shouldBe an[HttpTimeoutException]
           // Sent, and not a connection that was never made.
@@ -235,14 +247,14 @@ class ComputingUnitClientSpec extends AnyFlatSpec with Matchers {
   it should "not have reached a unit nothing listens for: nothing was sent" in {
     val gone = Using.resource(new StubUnit(204))(_.address)
 
-    new ClientOf(gone).start(7, "{}", uid) match {
+    new ClientOf(gone).start(7, "{}", uid, None) match {
       case Unreached(cause) => cause shouldBe a[ConnectException]
       case other            => fail(s"the hand-over came to $other")
     }
   }
 
   it should "not have reached a unit no address is recorded for, or whose address cannot be read" in {
-    new HttpComputingUnitClient(_ => None).start(7, "{}", uid) match {
+    new HttpComputingUnitClient(_ => None).start(7, "{}", uid, None) match {
       case Unreached(cause) =>
         cause shouldBe a[NoSuchElementException]
         cause.getMessage shouldBe "No address is recorded for computing unit 7."

@@ -47,8 +47,11 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
   // Executions below 100 are left to the specs that name one.
   private val nextExecutionId = new AtomicLong(100)
 
+  /** The log of a new execution, whose namespace is made. */
   private def freshLogUri(warehouse: Option[String] = None): URI =
-    logUri(workflowId, ExecutionIdentity(nextExecutionId.getAndIncrement()), warehouse)
+    withNamespace(
+      logUri(workflowId, ExecutionIdentity(nextExecutionId.getAndIncrement()), warehouse)
+    )
 
   private val createdAtMs = 1794873600000L
   private val beatEveryMs = 30000L
@@ -476,7 +479,7 @@ class ExecutionLogStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcC
     val otherTables = Seq(
       VFSURIFactory.createConsoleMessagesURI(workflowId, executionId),
       VFSURIFactory.createRuntimeStatisticsURI(workflowId, executionId),
-      // Segments the store did not write would address another table in the log namespace.
+      // Segments the store did not write would address another table of the execution.
       new URI("vfs:///wid/12/eid/1/opid/op/executionlog"),
       new URI("vfs:///wid/12/eid/1/EXECUTIONLOG"),
       // A warehouse name that does not decode, so the URI would fall back to the default.

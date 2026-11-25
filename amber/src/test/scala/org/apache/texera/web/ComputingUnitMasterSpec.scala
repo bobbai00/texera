@@ -524,12 +524,19 @@ class ComputingUnitMasterSpec
       com.fasterxml.jackson.module.scala.DefaultScalaModule.getClass.getName
     )
     // Jersey parses the bodies of the unit's routes with this mapper: a plan and a change the
-    // Dashboard service hands over, each as one JSON string, and the agent's wait, its list of
+    // Dashboard service hands over, each as one JSON string, the plan with its execution's token
+    // for the lake, or with none for a lake that takes none, and the agent's wait, its list of
     // targets included...
     mapper.readValue(
-      """{"plan":"{\"formatVersion\": 1}","computingUnitId":3}""",
+      """{"plan":"{\"formatVersion\": 1}","computingUnitId":3,
+        |"catalogToken":"eyJhbGciOiJFUzI1NiJ9.e30.c2lnbmVk"}""".stripMargin,
       classOf[StartExecutionRequest]
-    ) shouldBe StartExecutionRequest("""{"formatVersion": 1}""", 3)
+    ) shouldBe
+      StartExecutionRequest("""{"formatVersion": 1}""", 3, "eyJhbGciOiJFUzI1NiJ9.e30.c2lnbmVk")
+    mapper.readValue(
+      """{"plan":"{\"formatVersion\": 1}","computingUnitId":3,"catalogToken":null}""",
+      classOf[StartExecutionRequest]
+    ) shouldBe StartExecutionRequest("""{"formatVersion": 1}""", 3, null)
     mapper.readValue(
       """{"update":"{\"formatVersion\": 1}"}""",
       classOf[ApplyUpdateRequest]

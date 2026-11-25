@@ -44,6 +44,8 @@ import scala.collection.mutable.ArrayBuffer
   * @param writerIdentifier a unique identifier used to prefix the created files.
   * @param warehouse the warehouse whose catalog manages the table metadata; `None` uses the
   *                  configured default.
+  * @param execution the execution the table is of, whose token the requests about it carry
+  *                  (see `CatalogIdentity`); `None` for a table of no execution.
   * @param tableNamespace the namespace of the Iceberg table.
   * @param tableName the name of the Iceberg table.
   * @param tableSchema the schema of the Iceberg table.
@@ -53,6 +55,7 @@ import scala.collection.mutable.ArrayBuffer
 private[storage] class IcebergTableWriter[T](
     val writerIdentifier: String,
     val warehouse: Option[String],
+    val execution: Option[Long],
     val tableNamespace: String,
     val tableName: String,
     val tableSchema: Schema,
@@ -61,7 +64,7 @@ private[storage] class IcebergTableWriter[T](
 
   // Resolved per use (#7290): the catalog cache is bounded and closes evicted entries,
   // so the writer must not pin one across its lifetime.
-  private def catalog: Catalog = IcebergCatalogInstance.getInstance(warehouse)
+  private def catalog: Catalog = IcebergCatalogInstance.getInstance(warehouse, execution)
 
   // Buffer to hold items before flushing to the table
   private val buffer = new ArrayBuffer[T]()

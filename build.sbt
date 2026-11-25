@@ -198,6 +198,10 @@ lazy val ComputingUnitManagingService = (project in file("computing-unit-managin
     // from the repo root so MockTexeraDB can resolve sql/texera_ddl.sql by relative path.
     Test / fork := true,
     Test / envVars += "COMPUTING_UNIT_SHARING_ENABLED" -> "true",
+    // A key for units that differs from the services' own, so a spec can tell which one a unit
+    // is given (storage.conf's unit key is the services' own unless these are set).
+    Test / envVars += "STORAGE_S3_UNIT_AUTH_USERNAME" -> "texera-unit-in-tests",
+    Test / envVars += "STORAGE_S3_UNIT_AUTH_PASSWORD" -> "unit-password-in-tests",
     Test / forkOptions := (Test / forkOptions).value
       .withWorkingDirectory((ThisBuild / baseDirectory).value),
     // Isolate the sharing-disabled suite into its own forked JVM without

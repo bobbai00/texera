@@ -22,6 +22,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from core.models import Schema, Tuple
+from core.storage.execution_namespace import execution_namespace
 from core.storage.iceberg.iceberg_catalog_instance import IcebergCatalogInstance
 from core.storage.iceberg.iceberg_document import IcebergDocument
 from core.storage.iceberg.iceberg_utils import (
@@ -32,8 +33,11 @@ from core.storage.iceberg.iceberg_utils import (
     load_table_metadata,
 )
 from core.storage.model.virtual_document import VirtualDocument
-from core.storage.storage_config import StorageConfig
-from core.storage.vfs_uri_factory import VFSURIFactory, VFSResourceType
+from core.storage.vfs_uri_factory import (
+    VFSURIFactory,
+    VFSResourceType,
+    VFSUriComponents,
+)
 
 
 class DocumentFactory:
@@ -45,19 +49,20 @@ class DocumentFactory:
     ICEBERG = "iceberg"
 
     @staticmethod
-    def _resolve_namespace(resource_type: VFSResourceType) -> str:
-        # Only RESULT and STATE are mapped here: the Python runtime writes those
+    def _resolve_namespace(components: VFSUriComponents) -> str:
+        # Every table of an execution lives in the namespace of that execution,
+        # named after the execution in the URI (matches DocumentFactory.scala).
+        # Only RESULT and STATE are served here: the Python runtime writes those
         # tables. CONSOLE_MESSAGES, RUNTIME_STATISTICS and EXECUTION_LOG are
-        # produced exclusively from the Scala side (see DocumentFactory.scala), so
-        # they are intentionally absent from this mapping and fall through to the
+        # produced exclusively from the Scala side, so they fall through to the
         # unsupported branch.
-        match resource_type:
-            case VFSResourceType.RESULT:
-                return StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE
-            case VFSResourceType.STATE:
-                return StorageConfig.ICEBERG_TABLE_STATE_NAMESPACE
+        match components.resource_type:
+            case VFSResourceType.RESULT | VFSResourceType.STATE:
+                return execution_namespace(components.execution_id.id)
             case _:
-                raise ValueError(f"Resource type {resource_type} is not supported")
+                raise ValueError(
+                    f"Resource type {components.resource_type} is not supported"
+                )
 
     @staticmethod
     def sanitize_uri_path(uri):
@@ -81,7 +86,7 @@ class DocumentFactory:
         parsed_uri = urlparse(uri)
         if parsed_uri.scheme == VFSURIFactory.VFS_FILE_URI_SCHEME:
             components = VFSURIFactory.decode_uri(uri)
-            namespace = DocumentFactory._resolve_namespace(components.resource_type)
+            namespace = DocumentFactory._resolve_namespace(components)
             storage_key = DocumentFactory.sanitize_uri_path(parsed_uri)
             warehouse = components.warehouse
             # Convert Amber Schema to Iceberg Schema with LARGE_BINARY
@@ -120,13 +125,13 @@ class DocumentFactory:
 
         Raises:
             NotImplementedError: if the URI scheme is not ``vfs``.
-            ValueError: if the resolved resource type has no iceberg namespace
-                mapping (see ``_resolve_namespace``).
+            ValueError: if the URI's resource type is one the Python side does
+                not serve (see ``_resolve_namespace``).
         """
         parsed_uri = urlparse(uri)
         if parsed_uri.scheme == VFSURIFactory.VFS_FILE_URI_SCHEME:
             components = VFSURIFactory.decode_uri(uri)
-            namespace = DocumentFactory._resolve_namespace(components.resource_type)
+            namespace = DocumentFactory._resolve_namespace(components)
             storage_key = DocumentFactory.sanitize_uri_path(parsed_uri)
             warehouse = components.warehouse
             return IcebergCatalogInstance.get_instance(warehouse).table_exists(
@@ -142,7 +147,7 @@ class DocumentFactory:
         parsed_uri = urlparse(uri)
         if parsed_uri.scheme == VFSURIFactory.VFS_FILE_URI_SCHEME:
             components = VFSURIFactory.decode_uri(uri)
-            namespace = DocumentFactory._resolve_namespace(components.resource_type)
+            namespace = DocumentFactory._resolve_namespace(components)
             storage_key = DocumentFactory.sanitize_uri_path(parsed_uri)
             warehouse = components.warehouse
 

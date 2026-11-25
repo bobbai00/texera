@@ -40,13 +40,15 @@ import scala.util.Try
 /**
   * IcebergCatalogInstance manages the Iceberg catalog clients used across the Texera application.
   *
-  * Catalogs are cached per warehouse: each distinct warehouse name gets its own lazily-created
-  * catalog client, so a single JVM may hold several catalogs, one per warehouse it touches. Callers
-  * that do not specify a warehouse use the configured default, preserving single-warehouse (non-BYO)
-  * behavior.
+  * REST catalogs are cached per warehouse and identity: each distinct warehouse name, and in it
+  * each [[CatalogIdentity.cacheIdentity]] the JVM's requests have, gets its own lazily-created
+  * catalog client. So a computing unit that runs several executions of one warehouse holds a
+  * client for each, and no client sends one execution's token with a request about another's
+  * tables, while a service holds one client per warehouse. Callers that do not specify a
+  * warehouse use the configured default, preserving single-warehouse (non-BYO) behavior.
   *
-  * Only the REST catalog varies by warehouse; the hadoop and postgres catalogs are warehouse-agnostic
-  * and ignore the warehouse argument.
+  * Only the REST catalog varies by warehouse and identity; the hadoop and postgres catalogs are
+  * warehouse-agnostic, take no token, and ignore both arguments.
   *
   * The cache is bounded (#7290): per-user warehouses (#6870) make the set of catalogs a
   * long-lived JVM touches unbounded, and each REST catalog holds an HTTP client. An entry
@@ -117,15 +119,20 @@ object IcebergCatalogInstance extends LazyLogging {
   private def defaultWarehouse: String = StorageConfig.icebergRESTCatalogWarehouseName
 
   /**
-    * The cache key for a warehouse. Only the REST catalog is scoped to a warehouse;
-    * hadoop and postgres ignore it, so they must share one entry. Keying them by
-    * warehouse name would build a second, fully equivalent catalog per distinct name
-    * -- for postgres a second JdbcCatalog with its own connection pool, all pointing
-    * at the same database. Mirrors the Python side, which keys those under a constant.
+    * The cache key for the requests about `execution` to a warehouse. Only the REST catalog is
+    * scoped to a warehouse, and only it takes tokens, so its key is the warehouse and the
+    * requests' identity; hadoop and postgres ignore both, so they must share one entry. Keying
+    * them by warehouse name would build a second, fully equivalent catalog per distinct name
+    * -- for postgres a second JdbcCatalog with its own connection pool, all pointing at the
+    * same database. Mirrors the Python side, which keys those under a constant.
     */
-  private def cacheKey(warehouse: String): String =
-    StorageConfig.icebergCatalogType match {
-      case "rest" => warehouse
+  private[storage] def cacheKey(
+      warehouse: String,
+      execution: Option[Long],
+      catalogType: String = StorageConfig.icebergCatalogType
+  ): String =
+    catalogType match {
+      case "rest" => s"$warehouse|${CatalogIdentity.cacheIdentity(execution)}"
       case _      => SharedCatalogKey
     }
 
@@ -134,11 +141,13 @@ object IcebergCatalogInstance extends LazyLogging {
     *
     * @param warehouse the warehouse to obtain a catalog for; `None` uses the configured
     *                  default, mirroring the Python side's `Optional[str]`.
+    * @param execution the execution the requests through it are about, which decides the token
+    *                  they carry (see [[CatalogIdentity]]); `None` for requests about none.
     * @return the Iceberg catalog for that warehouse.
     */
-  def getInstance(warehouse: Option[String] = None): Catalog = {
+  def getInstance(warehouse: Option[String] = None, execution: Option[Long] = None): Catalog = {
     val name = warehouse.getOrElse(defaultWarehouse)
-    getOrLoad(catalogs, cacheKey(name), () => createCatalog(name))
+    getOrLoad(catalogs, cacheKey(name, execution), () => createCatalog(name, execution))
   }
 
   /**
@@ -166,7 +175,17 @@ object IcebergCatalogInstance extends LazyLogging {
         throw e.getCause
     }
 
-  private def createCatalog(warehouse: String): Catalog =
+  /**
+    * The execution a new REST client for requests about `execution` speaks for: that execution
+    * where the requests about one have an identity of their own, in
+    * [[CatalogIdentity.Executions]] mode, and none otherwise, where one client serves every
+    * execution of its warehouse and its requests carry the same token whichever execution they
+    * are about.
+    */
+  private[storage] def speaksFor(execution: Option[Long]): Option[Long] =
+    execution.filter(_ => CatalogIdentity.mode == CatalogIdentity.Executions)
+
+  private def createCatalog(warehouse: String, execution: Option[Long]): Catalog =
     StorageConfig.icebergCatalogType match {
       case "hadoop" =>
         IcebergUtil.createHadoopCatalog(
@@ -174,10 +193,7 @@ object IcebergCatalogInstance extends LazyLogging {
           StorageConfig.fileStorageDirectoryPath
         )
       case "rest" =>
-        IcebergUtil.createRestCatalog(
-          "texera_iceberg",
-          warehouse
-        )
+        IcebergUtil.createRestCatalog("texera_iceberg", warehouse, execution = speaksFor(execution))
       case "postgres" =>
         IcebergUtil.createPostgresCatalog(
           "texera_iceberg",
@@ -192,7 +208,12 @@ object IcebergCatalogInstance extends LazyLogging {
     *
     * @param catalog   the catalog to cache.
     * @param warehouse the warehouse to cache it under; `None` uses the configured default.
+    * @param execution the execution whose requests it serves, as in [[getInstance]].
     */
-  def replaceInstance(catalog: Catalog, warehouse: Option[String] = None): Unit =
-    catalogs.put(cacheKey(warehouse.getOrElse(defaultWarehouse)), catalog)
+  def replaceInstance(
+      catalog: Catalog,
+      warehouse: Option[String] = None,
+      execution: Option[Long] = None
+  ): Unit =
+    catalogs.put(cacheKey(warehouse.getOrElse(defaultWarehouse), execution), catalog)
 }

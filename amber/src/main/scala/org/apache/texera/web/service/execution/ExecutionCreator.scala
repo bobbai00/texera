@@ -186,12 +186,15 @@ final class WorkflowNotCompiled(
   *     ([[ExecutionsMetadataPersistService.insertResultTables]]): the result service lists and
   *     reads the execution's results by them. A record that fails closes the row as failed,
   *     "its plan could not be made" (500).
-  *  1. The plan is handed to the computing unit, for the user
+  *  1. The execution's namespace is made in the warehouse it writes into, and on a REST catalog
+  *     the token its unit writes there with ([[ExecutionCatalogAccess.open]]). A catalog that
+  *     cannot do that closes the row as failed, "its plan could not be made" (500).
+  *  1. The plan is handed to the computing unit, for the user, with the token
   *     ([[ComputingUnitClient.start]]), and the unit starts the execution: the execution's id is
   *     answered (201). A unit that refuses the start closes the row as failed, with the unit's
   *     reason (409), and so does a unit that cannot be reached (503). A unit that was sent the
-  *     plan and does not answer may have started the execution: the row stays open (504), and
-  *     the closing job closes it by what its log shows.
+  *     plan and does not answer may have started the execution: the row stays open (504), with
+  *     its namespace and its token, and the closing job closes it by what its log shows.
   *  1. Off the request's thread, the workflow's earlier executions on the unit whose logs show
   *     an ending are closed, without waiting for the closing job: a run that ended seconds ago
   *     is replaced like any other. Then the results of its closed executions on the unit that a
@@ -201,11 +204,14 @@ final class WorkflowNotCompiled(
   * A create fails in one way: with the JAX-RS exception of its status, which the Dashboard answers
   * as `{"code", "message"}`. One that fails once its row exists and before a unit may have the
   * plan closes the row itself ([[ExecutionRecords.close]]): no engine and no log will ever say
-  * how such an execution ended. No email is sent about it: the user is looking at the failure.
+  * how such an execution ended. It also drops the execution's namespace, with any table a start
+  * the unit refused made in it, and ends what its token can do ([[ExecutionCatalogAccess.drop]]).
+  * No email is sent about it: the user is looking at the failure.
   *
   * @param units         hands the plan to the execution's computing unit
   * @param replayLogRoot where runs keep their replay logs; None when they keep none
   * @param background    runs what a create leaves to be done after it has answered
+  * @param access        makes the execution's namespace and token, and drops them
   */
 class ExecutionCreator(
     compiling: WorkflowCompilingService = WorkflowCompilingService.forDeployment,
@@ -221,7 +227,8 @@ class ExecutionCreator(
     ),
     closer: ExecutionCloser = new ExecutionCloser(),
     compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
-    expiry: ExecutionExpiry = ExecutionExpiry.forDeployment
+    expiry: ExecutionExpiry = ExecutionExpiry.forDeployment,
+    access: ExecutionCatalogAccess = ExecutionCatalogAccess.forDeployment
 ) extends LazyLogging {
   import ExecutionCreator.{CheckedRequest, MaxColumnLength}
   import PhysicalPlanCodec.MaxPlanBytes
@@ -280,7 +287,7 @@ class ExecutionCreator(
     )
     // From here the row exists: whatever fails before a unit may have the plan closes it as
     // failed, with why, so it does not stay open although no unit can ever start it.
-    val (plan, resultTables) = closingOnFailure(eid, planNotMade) {
+    val (plan, resultTables) = closingOnFailure(eid, warehouse, planNotMade) {
       val hints = costHints.load(checked.wid, uid)
       val made = compiling.planToRun(
         PlanRequest(
@@ -297,11 +304,13 @@ class ExecutionCreator(
       val linked = linkedPlan(made, wid, eid, warehouse, hints, replay, replayLog)
       (PhysicalPlanCodec.toJson(PhysicalPlanCodec.encode(linked)), linked.resultTables)
     }
-    closingOnFailure(eid, _ => ExecutionClosing.PlanTooLarge)(requireFits(eid, plan))
-    closingOnFailure(eid, planNotMade)(
+    closingOnFailure(eid, warehouse, _ => ExecutionClosing.PlanTooLarge)(requireFits(eid, plan))
+    closingOnFailure(eid, warehouse, planNotMade)(
       ExecutionsMetadataPersistService.insertResultTables(eid, resultTables)
     )
-    handOver(eid, checked.computingUnitId, plan, uid)
+    val catalogToken =
+      closingOnFailure(eid, warehouse, planNotMade)(access.open(eid.id, warehouse))
+    handOver(eid, checked.computingUnitId, plan, uid, warehouse, catalogToken)
     background.execute(() => {
       closeEndedBefore(eid, wid, checked.computingUnitId)
       expiry.expireReplaced(wid.id, checked.computingUnitId, eid.id)
@@ -311,24 +320,27 @@ class ExecutionCreator(
 
   /**
     * Hands `plan`, the plan of execution `eid`, to computing unit `cuid`, which starts the
-    * execution. A unit that refuses it, or that nothing reached, never has the plan: the row is
-    * closed as failed, with why. A unit that was sent the plan and did not answer may run it:
-    * the row is left open.
+    * execution, with the token its catalog requests carry. A unit that refuses it, or that
+    * nothing reached, never has the plan: the row is closed as failed, with why. A unit that was
+    * sent the plan and did not answer may run it: the row is left open.
     *
+    * @param warehouse the warehouse the execution writes into
     * @throws WebApplicationException 409 with the unit's reason, 503, or 504
     */
   private def handOver(
       eid: ExecutionIdentity,
       cuid: Int,
       plan: String,
-      uid: Int
+      uid: Int,
+      warehouse: Option[String],
+      catalogToken: Option[String]
   ): Unit =
-    units.start(cuid, plan, uid) match {
+    units.start(cuid, plan, uid, catalogToken) match {
       case Taken =>
         logger.info(s"Execution ${eid.id} is started on computing unit $cuid.")
       case Refused(why) =>
         logger.info(s"Computing unit $cuid did not start execution ${eid.id}: $why")
-        closeUnstartable(eid, ExecutionClosing.notStartedByUnit(why))
+        closeUnstartable(eid, ExecutionClosing.notStartedByUnit(why), warehouse)
         throw new WebApplicationException(
           s"Execution ${eid.id} could not be started on computing unit $cuid. $why",
           Response.Status.CONFLICT
@@ -338,7 +350,7 @@ class ExecutionCreator(
           s"Computing unit $cuid could not be reached to start execution ${eid.id}.",
           cause
         )
-        closeUnstartable(eid, ExecutionClosing.UnitUnreachable)
+        closeUnstartable(eid, ExecutionClosing.UnitUnreachable, warehouse)
         throw new WebApplicationException(
           s"Execution ${eid.id} could not be started: computing unit $cuid could not be reached.",
           Response.Status.SERVICE_UNAVAILABLE
@@ -410,27 +422,36 @@ class ExecutionCreator(
     }
 
   /**
-    * `step`, a step of the create of execution `eid` after its row exists and before its plan
-    * is handed to a unit. When it fails, the row is closed as failed for `reason` of the
-    * failure ([[closeUnstartable]]), and the create fails with [[answerTo]] the failure.
+    * `step`, a step of the create of execution `eid`, which writes into `warehouse`, after its
+    * row exists and before its plan is handed to a unit. When it fails, the row is closed as
+    * failed for `reason` of the failure ([[closeUnstartable]]), and the create fails with
+    * [[answerTo]] the failure.
     */
-  private def closingOnFailure[T](eid: ExecutionIdentity, reason: Throwable => String)(
-      step: => T
-  ): T =
+  private def closingOnFailure[T](
+      eid: ExecutionIdentity,
+      warehouse: Option[String],
+      reason: Throwable => String
+  )(step: => T): T =
     try step
     catch {
       case NonFatal(failure) =>
-        closeUnstartable(eid, reason(failure))
+        closeUnstartable(eid, reason(failure), warehouse)
         throw answerTo(eid, failure)
     }
 
   /**
     * Closes the row of execution `eid`, whose create failed, as failed for `reason`: as one no
-    * unit ever started, which it is, so nothing looks for its results. A close that fails is
-    * logged, not thrown, since the caller is owed the create's own failure; the closing job
-    * then closes the row as never started.
+    * unit ever started, which it is, so nothing looks for its results. Then drops its namespace
+    * in `warehouse`, with any table a start its unit refused made, and ends what its token can
+    * do ([[ExecutionCatalogAccess.drop]]): no unit runs it. A close or a drop that fails is
+    * logged, not thrown, since the caller is owed the create's own failure: the closing job then
+    * closes a row left open as never started.
     */
-  private def closeUnstartable(eid: ExecutionIdentity, reason: String): Unit =
+  private def closeUnstartable(
+      eid: ExecutionIdentity,
+      reason: String,
+      warehouse: Option[String]
+  ): Unit = {
     try {
       ExecutionRecords.close(
         eid.id,
@@ -444,6 +465,15 @@ class ExecutionCreator(
       case NonFatal(unclosed) =>
         logger.warn(s"Execution ${eid.id}, whose create failed, could not be closed.", unclosed)
     }
+    try access.drop(eid.id, warehouse)
+    catch {
+      case NonFatal(undropped) =>
+        logger.warn(
+          s"The namespace of execution ${eid.id}, whose create failed, could not be dropped.",
+          undropped
+        )
+    }
+  }
 
   /**
     * The plan the compiling service made for execution `eid` of workflow `wid`, `made`, as the

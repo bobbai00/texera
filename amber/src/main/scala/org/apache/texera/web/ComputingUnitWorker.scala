@@ -19,6 +19,7 @@
 
 package org.apache.texera.web
 
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.commons.jcs3.access.exception.InvalidArgumentException
 
@@ -44,6 +45,9 @@ object ComputingUnitWorker {
   }
 
   def main(args: Array[String]): Unit = {
+    // What this process asks the lake's catalog about an execution carries the execution's
+    // token, which each of its workers is handed with its configuration (WorkerConfig).
+    CatalogIdentity.use(CatalogIdentity.Executions)
     val argMap = parseArgs(args)
 
     // start actor system worker node

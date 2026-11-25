@@ -22,7 +22,12 @@ package org.apache.texera.amber.engine.architecture.pythonworker
 import com.twitter.util.Promise
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit}
-import org.apache.texera.amber.core.virtualidentity.{ActorVirtualIdentity, ChannelIdentity}
+import org.apache.texera.amber.core.storage.CatalogIdentity
+import org.apache.texera.amber.core.virtualidentity.{
+  ActorVirtualIdentity,
+  ChannelIdentity,
+  ExecutionIdentity
+}
 import org.apache.texera.amber.core.workflow.PythonEnvironment
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor
 import org.apache.texera.amber.engine.architecture.common.WorkflowActor.{NetworkAck, NetworkMessage}
@@ -37,7 +42,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
 }
 import org.apache.texera.amber.engine.common.ambermessage.WorkflowFIFOMessage
 import org.apache.texera.amber.engine.common.ambermessage.WorkflowMessage.getInMemSize
-import org.apache.texera.amber.engine.architecture.scheduling.config.WorkerConfig
+import org.apache.texera.amber.engine.architecture.scheduling.config.{CatalogToken, WorkerConfig}
 import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.common.config.UdfConfig
 import org.scalatest.BeforeAndAfterAll
@@ -356,5 +361,22 @@ class PythonWorkflowWorkerSpec
     val worker = newWorker(config())
 
     a[NotImplementedError] should be thrownBy worker.underlyingActor.loadFromCheckpoint(null)
+  }
+
+  it should "hold its execution's token in its JVM as it starts" in {
+    val eid = ExecutionIdentity(9643001L)
+    CatalogIdentity.registered(eid.id) shouldBe None
+
+    // Made, with no process started: the process gets the token in its environment
+    // (PythonWorkflowWorkerStartupConfigSpec).
+    newWorker(
+      WorkerConfig(
+        ActorVirtualIdentity("python-worker-spec"),
+        executionId = eid,
+        catalogToken = CatalogToken("t-9643001")
+      )
+    )
+
+    CatalogIdentity.registered(eid.id) shouldBe Some("t-9643001")
   }
 }

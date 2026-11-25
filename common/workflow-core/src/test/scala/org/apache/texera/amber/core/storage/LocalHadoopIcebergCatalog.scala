@@ -50,10 +50,15 @@ object LocalHadoopIcebergCatalog {
     * `warehouses`.
     *
     * A suite that exercises a warehouse-scoped URI must name that warehouse here:
-    * under the configured `rest` catalog type the cache is keyed by warehouse name,
-    * so an unregistered name would miss and try to build a *live* REST catalog,
-    * making the suite pass or fail according to the machine's catalog config rather
-    * than the code under test.
+    * under the configured `rest` catalog type the cache is keyed by warehouse name
+    * (and the [[CatalogIdentity]] of the requests, one identity in a JVM left
+    * anonymous, as the suites' are), so an unregistered name would miss and try to
+    * build a *live* REST catalog, making the suite pass or fail according to the
+    * machine's catalog config rather than the code under test.
+    *
+    * The catalog is local: it makes a table in a namespace that is not there, where the
+    * REST catalog refuses one. A suite that writes an execution's tables makes the
+    * execution's namespace all the same, as the Dashboard service does.
     */
   def ensure(warehouses: String*): Unit =
     synchronized {

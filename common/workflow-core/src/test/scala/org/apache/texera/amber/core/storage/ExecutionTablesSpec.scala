@@ -19,8 +19,13 @@
 
 package org.apache.texera.amber.core.storage
 
-import org.apache.iceberg.catalog.TableIdentifier
-import org.apache.iceberg.exceptions.ServiceUnavailableException
+import org.apache.iceberg.catalog.{Namespace, TableIdentifier}
+import org.apache.iceberg.exceptions.{
+  NoSuchNamespaceException,
+  NotFoundException,
+  ServiceUnavailableException
+}
+import org.apache.iceberg.io.FileIO
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -30,13 +35,14 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.IcebergUtil
-import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.tags.NonParallelTest
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
 import java.net.URI
 import java.util.concurrent.atomic.AtomicLong
+import scala.jdk.CollectionConverters._
+import scala.util.Using
 
 /**
   * Specs for [[ExecutionTables]] on Iceberg's JDBC catalog (see [[EmbeddedJdbcCatalog]]): the
@@ -44,6 +50,11 @@ import java.util.concurrent.atomic.AtomicLong
   */
 @NonParallelTest
 class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCatalog {
+
+  /** Every kind of table an execution has. */
+  private val EveryKind: Seq[VFSResourceType.Value] =
+    ExecutionTables.ProducedKinds ++
+      Seq(VFSResourceType.RUNTIME_STATISTICS, VFSResourceType.EXECUTION_LOG)
 
   private val workflowId = WorkflowIdentity(12)
   private val nextExecutionId = new AtomicLong(100)
@@ -64,6 +75,9 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
 
   private def statisticsRow(operator: String): RuntimeStatisticsRow =
     RuntimeStatisticsRow(operator, 1794873600000L, 1, 2, 3, 4, 5, 6, 7, 1, 1)
+
+  private def namespaceOf(eid: ExecutionIdentity): Namespace =
+    Namespace.of(ExecutionNamespace.of(eid.id))
 
   "ExecutionTables.ownTables" should "name the log, the statistics and the console of an execution" in {
     val eid = ExecutionIdentity(34)
@@ -102,7 +116,7 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
 
     val found = ExecutionTables.portTables(workflowId, eid, None)
     found should contain theSameElementsAs stored
-    // Each is a table's URI: of the result namespace, or of the state namespace.
+    // Each is a table's URI: of a result, or of a state.
     found.map(VFSURIFactory.decodeURI(_).resourceType).distinct should contain theSameElementsAs
       Seq(VFSResourceType.RESULT, VFSResourceType.STATE)
   }
@@ -127,29 +141,27 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
   }
 
   it should "find nothing for an execution that stored no port" in {
-    ExecutionTables.portTables(workflowId, freshExecution(), None) shouldBe Nil
+    val eid = freshExecution()
+    ExecutionTables.portTables(workflowId, eid, None) shouldBe Nil
+    withNamespace(ConsoleMessageStore.consoleUri(workflowId, eid, None))
+    ExecutionTables.portTables(workflowId, eid, None) shouldBe Nil
   }
 
   it should "leave out a table whose name starts as the execution's but gives no port's URI back" in {
     val eid = freshExecution()
     val stored = portTablesMade(locationOf(eid, port("scan", 0)))
+    val notAPort =
+      TableIdentifier.of(namespaceOf(eid), s"wid_${workflowId.id}_eid_${eid.id}_not_a_port")
     IcebergUtil.createTable(
       IcebergCatalogInstance.getInstance(None),
-      StorageConfig.icebergTableResultNamespace,
-      s"wid_${workflowId.id}_eid_${eid.id}_not_a_port",
+      ExecutionNamespace.of(eid.id),
+      notAPort.name(),
       IcebergUtil.toIcebergSchema(Schema().add("line", AttributeType.STRING)),
       overrideIfExists = true
     )
 
     ExecutionTables.portTables(workflowId, eid, None) should contain theSameElementsAs stored
-    IcebergCatalogInstance
-      .getInstance(None)
-      .tableExists(
-        TableIdentifier.of(
-          StorageConfig.icebergTableResultNamespace,
-          s"wid_${workflowId.id}_eid_${eid.id}_not_a_port"
-        )
-      ) shouldBe true
+    IcebergCatalogInstance.getInstance(None).tableExists(notAPort) shouldBe true
   }
 
   it should "throw, not find nothing, when the catalog cannot answer" in {
@@ -211,9 +223,9 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
 
     ExecutionTables.storedBytes(log) shouldBe 0L
     // Made, with its beat, and no row: the table has no snapshot.
-    ExecutionLogStore.create(log, 1794873600000L, 30000L)
+    ExecutionLogStore.create(withNamespace(log), 1794873600000L, 30000L)
     ExecutionTables.storedBytes(log) shouldBe 0L
-    // A port's tables, in namespaces nothing was ever written to.
+    // A port's tables, which nothing ever made.
     ExecutionTables.storedBytes(
       VFSURIFactory.resultURI(locationOf(eid, port("scan", 0)))
     ) shouldBe 0L
@@ -221,7 +233,7 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
 
   it should "count the bytes of a table's data files, more with each append" in {
     val eid = freshExecution()
-    val statistics = RuntimeStatisticsStore.statisticsUri(workflowId, eid, None)
+    val statistics = withNamespace(RuntimeStatisticsStore.statisticsUri(workflowId, eid, None))
     RuntimeStatisticsStore.create(statistics)
 
     RuntimeStatisticsStore.append(statistics, Seq(statisticsRow("scan")))
@@ -233,8 +245,9 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
   }
 
   it should "count a written table in the warehouse its URI names" in {
-    val statistics =
+    val statistics = withNamespace(
       RuntimeStatisticsStore.statisticsUri(workflowId, freshExecution(), Some(warehouse))
+    )
     RuntimeStatisticsStore.create(statistics)
     RuntimeStatisticsStore.append(statistics, Seq(statisticsRow("scan")))
 
@@ -242,7 +255,7 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
   }
 
   it should "throw, not count nothing, when the catalog cannot answer" in {
-    val log = ExecutionLogStore.logUri(workflowId, freshExecution(), None)
+    val log = withNamespace(ExecutionLogStore.logUri(workflowId, freshExecution(), None))
     ExecutionLogStore.create(log, 1794873600000L, 30000L)
 
     whileCatalogUnavailable {
@@ -250,15 +263,56 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     }
   }
 
-  /** Makes the table at each of `uris`, as a run's writers do. */
+  /** Makes the table at each of `uris` in its execution's namespace, as a run's writers do. */
   private def made(uris: URI*): Seq[URI] = {
-    uris.foreach(DocumentFactory.createDocument(_, Schema().add("line", AttributeType.STRING)))
+    uris.foreach(uri =>
+      DocumentFactory.createDocument(withNamespace(uri), Schema().add("line", AttributeType.STRING))
+    )
     uris
   }
 
   /** A table of execution `eid`, of workflow `wid`, that no function of today's names. */
   private def odd(eid: ExecutionIdentity, rest: String, wid: WorkflowIdentity = workflowId): URI =
     new URI(s"vfs:///wid/${wid.id}/eid/${eid.id}/$rest")
+
+  "A table of an execution" should "be in the execution's namespace, and in no other" in {
+    val eid = freshExecution()
+    val base = locationOf(eid, port("scan", 0))
+    val tables = made(
+      VFSURIFactory.resultURI(base),
+      VFSURIFactory.stateURI(base),
+      ConsoleMessageStore.consoleUri(workflowId, eid, None),
+      RuntimeStatisticsStore.statisticsUri(workflowId, eid, None),
+      ExecutionLogStore.logUri(workflowId, eid, None)
+    )
+
+    jdbcCatalog.listTables(namespaceOf(eid)).asScala.map(_.name()) should contain theSameElementsAs
+      tables.map(_.getPath.stripPrefix("/").replace('/', '_'))
+    DocumentFactory.icebergTableOf(tables.head).get.name() should endWith(
+      s"execution-${eid.id}.wid_12_eid_${eid.id}_globalportid_" +
+        "(logicalOpId=scan,layerName=main,portId=0,isInternal=false,isInput=false)_result"
+    )
+  }
+
+  it should "not be made where its execution has no namespace, which none of them makes" in {
+    // The catalog refuses a table in a namespace that is not there, as Lakekeeper does, and a
+    // computing unit's token can make no namespace.
+    val eid = freshExecution()
+    val base = locationOf(eid, port("scan", 0))
+    Seq(
+      VFSURIFactory.resultURI(base),
+      VFSURIFactory.stateURI(base),
+      ConsoleMessageStore.consoleUri(workflowId, eid, None),
+      RuntimeStatisticsStore.statisticsUri(workflowId, eid, None),
+      ExecutionLogStore.logUri(workflowId, eid, None)
+    ).foreach { uri =>
+      withClue(s"$uri: ") {
+        a[NoSuchNamespaceException] should be thrownBy
+          DocumentFactory.createDocument(uri, Schema().add("line", AttributeType.STRING))
+      }
+    }
+    jdbcCatalog.namespaceExists(namespaceOf(eid)) shouldBe false
+  }
 
   "ExecutionTables.exists and drop" should "tell and drop the table at a URI, and answer false where there is none" in {
     val eid = freshExecution()
@@ -327,22 +381,41 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     // A second time there is nothing left to find.
     ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.ProducedKinds) shouldBe Nil
 
-    ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.AllKinds) should
+    ExecutionTables.dropNamed(workflowId, eid, None, EveryKind) should
       contain theSameElementsAs Seq("wid_12_eid_3_runtimestatistics", "wid_12_eid_3_executionlog")
     Seq(statistics, log).foreach(uri =>
       withClue(s"$uri: ") {
         ExecutionTables.exists(uri) shouldBe false
       }
     )
+    // The namespace stays, with the tables of workflow 120's execution 3.
+    jdbcCatalog.namespaceExists(namespaceOf(eid)) shouldBe true
   }
 
   it should "drop nothing for an execution that has no table" in {
-    ExecutionTables.dropNamed(
-      workflowId,
-      freshExecution(),
-      Some(warehouse),
-      ExecutionTables.AllKinds
-    ) shouldBe Nil
+    val eid = freshExecution()
+    ExecutionTables.dropNamed(workflowId, eid, Some(warehouse), EveryKind) shouldBe
+      Nil
+    withNamespace(ConsoleMessageStore.consoleUri(workflowId, eid, Some(warehouse)))
+    ExecutionTables.dropNamed(workflowId, eid, Some(warehouse), EveryKind) shouldBe
+      Nil
+  }
+
+  it should "leave a table of the execution that is of none of the kinds" in {
+    val eid = freshExecution()
+    val result = made(VFSURIFactory.resultURI(locationOf(eid, port("scan", 0)))).head
+    val notAPort = s"wid_${workflowId.id}_eid_${eid.id}_not_a_port"
+    IcebergUtil.createTable(
+      IcebergCatalogInstance.getInstance(None),
+      ExecutionNamespace.of(eid.id),
+      notAPort,
+      IcebergUtil.toIcebergSchema(Schema().add("line", AttributeType.STRING)),
+      overrideIfExists = true
+    )
+
+    ExecutionTables.dropNamed(workflowId, eid, None, EveryKind) shouldBe
+      Seq(result.getPath.stripPrefix("/").replace('/', '_'))
+    jdbcCatalog.tableExists(TableIdentifier.of(namespaceOf(eid), notAPort)) shouldBe true
   }
 
   it should "throw, not drop nothing, when the catalog cannot answer" in {
@@ -352,6 +425,78 @@ class ExecutionTablesSpec extends AnyFlatSpec with Matchers with EmbeddedJdbcCat
     whileCatalogUnavailable {
       a[ServiceUnavailableException] should be thrownBy
         ExecutionTables.dropNamed(workflowId, eid, None, ExecutionTables.ProducedKinds)
+    }
+    ExecutionTables.exists(result) shouldBe true
+  }
+
+  /** The data files of the table at `uri`. */
+  private def dataFilesOf(uri: URI): Seq[String] =
+    Using.resource(DocumentFactory.icebergTableOf(uri).get.newScan().planFiles()) {
+      _.asScala.map(_.file().location()).toSeq
+    }
+
+  /** Whether `io` holds a file at `location`; a FileIO may say it does not by refusing it. */
+  private def holds(io: FileIO, location: String): Boolean =
+    try io.newInputFile(location).exists()
+    catch { case _: NotFoundException => false }
+
+  "ExecutionTables.dropNamespace" should
+    "drop the namespace with every table in it, data files and all, and no other's" in {
+    Seq(None, Some(warehouse)).foreach { warehouse =>
+      val eid = freshExecution()
+      val base = locationOf(eid, port("scan", 0), warehouse)
+      val statistics = RuntimeStatisticsStore.statisticsUri(workflowId, eid, warehouse)
+      RuntimeStatisticsStore.create(withNamespace(statistics))
+      RuntimeStatisticsStore.append(statistics, Seq(statisticsRow("scan")))
+      val io = DocumentFactory.icebergTableOf(statistics).get.io()
+      val dataFiles = dataFilesOf(statistics)
+      dataFiles should not be empty
+      all(dataFiles.map(holds(io, _))) shouldBe true
+      val tables = statistics +: made(
+        VFSURIFactory.resultURI(base),
+        VFSURIFactory.stateURI(base),
+        ConsoleMessageStore.consoleUri(workflowId, eid, warehouse),
+        ExecutionLogStore.logUri(workflowId, eid, warehouse),
+        // A table no function of today's names.
+        VFSURIFactory.uriOfPath(s"wid/12/eid/${eid.id}/opid/scan/consolemessages", warehouse)
+      )
+      // Another execution's.
+      val other = made(
+        ConsoleMessageStore.consoleUri(workflowId, ExecutionIdentity(eid.id + 1000), warehouse)
+      ).head
+
+      withClue(s"in warehouse $warehouse: ") {
+        ExecutionTables.dropNamespace(eid.id, warehouse) should contain theSameElementsAs
+          tables.map(_.getPath.stripPrefix("/").replaceFirst("^wh/[^/]+/", "").replace('/', '_'))
+
+        jdbcCatalog.namespaceExists(namespaceOf(eid)) shouldBe false
+        tables.foreach(uri => withClue(s"$uri: ") { ExecutionTables.exists(uri) shouldBe false })
+        dataFiles.foreach(file => withClue(s"$file: ") { holds(io, file) shouldBe false })
+        ExecutionTables.exists(other) shouldBe true
+      }
+    }
+  }
+
+  it should "drop the namespace of an execution that has no table" in {
+    val eid = freshExecution()
+    withNamespace(ConsoleMessageStore.consoleUri(workflowId, eid, None))
+
+    ExecutionTables.dropNamespace(eid.id, None) shouldBe Nil
+    jdbcCatalog.namespaceExists(namespaceOf(eid)) shouldBe false
+  }
+
+  it should "do nothing for an execution that has no namespace" in {
+    val eid = freshExecution()
+    ExecutionTables.dropNamespace(eid.id, None) shouldBe Nil
+    ExecutionTables.dropNamespace(eid.id, Some(warehouse)) shouldBe Nil
+  }
+
+  it should "throw, not drop nothing, when the catalog cannot answer" in {
+    val eid = freshExecution()
+    val result = made(VFSURIFactory.resultURI(locationOf(eid, port("scan", 0)))).head
+
+    whileCatalogUnavailable {
+      a[ServiceUnavailableException] should be thrownBy ExecutionTables.dropNamespace(eid.id, None)
     }
     ExecutionTables.exists(result) shouldBe true
   }

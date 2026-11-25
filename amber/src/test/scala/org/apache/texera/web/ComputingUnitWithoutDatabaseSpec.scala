@@ -134,8 +134,11 @@ class ComputingUnitWithoutDatabaseSpec
     system.actorOf(Props[SingleNodeListener](), "cluster-info")
     logged.start()
     rootLogger.addAppender(logged)
-    // Whatever an earlier build of this suite left in the catalog the tests share.
-    dropTables()
+    // Whatever an earlier build of this suite left in the catalog the tests share goes, and each
+    // execution has its namespace, as the Dashboard service makes it before a unit is handed
+    // the execution.
+    dropNamespaces()
+    executionIds.foreach(TestUtils.makeExecutionNamespace(_))
     // As a computing unit declares when it boots.
     SqlServer.withoutDatabase(ComputingUnitMaster.NoDatabase)
   }
@@ -144,23 +147,14 @@ class ComputingUnitWithoutDatabaseSpec
     try {
       rootLogger.detachAppender(logged)
       logged.stop()
-      dropTables()
+      dropNamespaces()
     } finally {
       TestKit.shutdownActorSystem(system)
       super.afterAll()
     }
 
-  private def dropTables(): Unit =
-    executionIds.foreach { eid =>
-      Try(
-        ExecutionTables.dropNamed(
-          workflowId,
-          ExecutionIdentity(eid),
-          None,
-          ExecutionTables.AllKinds
-        )
-      )
-    }
+  private def dropNamespaces(): Unit =
+    executionIds.foreach(eid => Try(TestUtils.dropExecutionNamespace(eid)))
 
   private def named[T <: LogicalOp](op: T, id: String): T = {
     op.setOperatorId(id)

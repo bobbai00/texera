@@ -23,6 +23,8 @@ import com.typesafe.config.ConfigFactory
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
+import scala.jdk.CollectionConverters._
+
 /**
   * Spec for the staged-file-cleanup settings added to [[StorageConfig]] (PR #5643).
   *
@@ -70,16 +72,17 @@ class StorageConfigSpec extends AnyFlatSpec with Matchers {
     StorageConfig.ENV_WAREHOUSE_ENABLED shouldBe "STORAGE_WAREHOUSE_ENABLED"
   }
 
-  "StorageConfig iceberg table settings" should "keep execution logs in the execution-log namespace by default" in {
-    if (sys.env.get("STORAGE_ICEBERG_TABLE_EXECUTION_LOG_NAMESPACE").isEmpty) {
-      StorageConfig.icebergTableExecutionLogNamespace shouldBe "execution-log"
-    }
-  }
-
-  it should "commit an execution's statistics and console output every 30 seconds by default" in {
+  "StorageConfig iceberg table settings" should
+    "commit an execution's statistics and console output every 30 seconds by default" in {
     if (sys.env.get("STORAGE_ICEBERG_TABLE_COMMIT_INTERVAL_MS").isEmpty) {
       StorageConfig.icebergTableCommitIntervalMs shouldBe 30000L
     }
+  }
+
+  it should "name no namespace: every table of an execution is in the execution's own" in {
+    val table =
+      ConfigFactory.parseResources("storage.conf").resolve().getConfig("storage.iceberg.table")
+    table.root().keySet().asScala shouldBe Set("commit")
   }
 
   "StorageConfig REST catalog settings" should
@@ -90,6 +93,36 @@ class StorageConfigSpec extends AnyFlatSpec with Matchers {
     }
     if (sys.env.get("STORAGE_ICEBERG_CATALOG_REST_SOCKET_TIMEOUT_MS").isEmpty) {
       StorageConfig.icebergRESTCatalogSocketTimeoutMs shouldBe 60000
+    }
+  }
+
+  it should "keep the shared warehouse's tables under the key prefix 'shared' by default" in {
+    if (sys.env.get("STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX").isEmpty) {
+      StorageConfig.icebergRESTCatalogKeyPrefix shouldBe "shared"
+    }
+  }
+
+  it should "issue tokens as texera, for texera-catalog, an execution's for 7 days, by default" in {
+    // Lakekeeper's LAKEKEEPER__OPENID_AUDIENCE in every deployment is this audience.
+    if (sys.env.get("STORAGE_ICEBERG_CATALOG_REST_TOKEN_ISSUER").isEmpty) {
+      StorageConfig.icebergRESTCatalogTokenIssuer shouldBe "texera"
+    }
+    if (sys.env.get("STORAGE_ICEBERG_CATALOG_REST_TOKEN_AUDIENCE").isEmpty) {
+      StorageConfig.icebergRESTCatalogTokenAudience shouldBe "texera-catalog"
+    }
+    if (sys.env.get("STORAGE_ICEBERG_CATALOG_REST_TOKEN_EXECUTION_TTL_SECONDS").isEmpty) {
+      StorageConfig.icebergRESTCatalogTokenExecutionTtlSeconds shouldBe 7L * 24 * 60 * 60
+    }
+  }
+
+  "StorageConfig object store settings" should
+    "give computing units the services' key unless a deployment names the units' own" in {
+    if (
+      Seq("STORAGE_S3_UNIT_AUTH_USERNAME", "STORAGE_S3_UNIT_AUTH_PASSWORD")
+        .forall(sys.env.get(_).isEmpty)
+    ) {
+      StorageConfig.s3UnitUsername shouldBe StorageConfig.s3Username
+      StorageConfig.s3UnitPassword shouldBe StorageConfig.s3Password
     }
   }
 

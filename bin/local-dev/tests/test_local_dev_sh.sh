@@ -1293,5 +1293,185 @@ else
 fi
 rm -rf "$_im_state"
 
+# 45) Lakekeeper and the gateway need the services this script runs on the host,
+#     and in bin/single-node both depend on the containerized ones: each is
+#     started on its own (--no-deps). Lakekeeper reads the access control
+#     service's key when it starts and stops when it cannot, so it waits for its
+#     migration and for that service; the gateway takes its own port, since
+#     texera-web holds 8080. Driven against a fake `docker` that records calls.
+_fd_dir=$(mktemp -d 2>/dev/null || mktemp -d -t ldfd)
+cat > "$_fd_dir/docker" <<'FAKE_DOCKER'
+#!/usr/bin/env bash
+# Records each call with the TEXERA_PORT it was given; answers what the helpers ask.
+printf 'TEXERA_PORT=%s %s\n' "${TEXERA_PORT:-}" "$*" >> "$FAKE_DOCKER_LOG"
+case "$1" in
+    wait)    echo "${FAKE_MIGRATE_EXIT:-0}" ;;
+    exec)    case "$*" in
+                 *pg_isready*) exit 0 ;;
+                 *psql*)       printf '%s\n' "${FAKE_HAS_OPENFGA_DB:-}" ;;
+             esac ;;
+    compose) exit "${FAKE_COMPOSE_RC:-0}" ;;
+esac
+FAKE_DOCKER
+chmod +x "$_fd_dir/docker"
+: > "$_fd_dir/overlay.yml"
+_stack_fns=""
+for _fn in docker_compose_files infra_compose _docker_container_for gateway_up lakekeeper_up \
+           start_one infra_require_openfga_database; do
+    _stack_fns+="$(_extract_fn "$_fn")"$'\n'
+done
+_stack_run() {  # $1=snippet, run against the helpers above, stubs and the fake docker
+    (
+        PATH="$_fd_dir:$PATH"
+        FAKE_DOCKER_LOG="$_fd_dir/calls"; export FAKE_DOCKER_LOG; : > "$FAKE_DOCKER_LOG"
+        DIM=""; RESET=""; BOLD=""
+        DOCKER_PROJECT=texera-local-dev
+        DOCKER_COMPOSE_FILE=/single-node/docker-compose.yml
+        DOCKER_OVERLAY_FILE="$_fd_dir/overlay.yml"
+        DOCKER_ENV_FILE=/single-node/.env
+        _require_host_lan_ip() { HOST_LAN_IP=10.1.2.3; export HOST_LAN_IP; }
+        amap_get() {
+            case "$1 $2" in
+                "SVC_PORT gateway")                echo 8086 ;;
+                "SVC_PORT access-control-service") echo 9096 ;;
+                "SVC_TYPE "*)                      echo docker ;;
+            esac
+        }
+        tui_ok()   { echo "ok: $*"; }
+        tui_err()  { echo "err: $*"; }
+        tui_warn() { echo "warn: $*"; }
+        tui_step() { :; }
+        tui_run_with_spinner() { shift 2; "$@"; }
+        wait_for_port() { return "${FAKE_PORT_DOWN:-0}"; }
+        docker_svc_state() { echo stopped; }
+        phase_set() { :; }
+        phase_clear() { :; }
+        eval "$_stack_fns"
+        eval "$1"
+    )
+}
+_calls='echo "---calls"; cat "$FAKE_DOCKER_LOG"'
+
+out=$(_stack_run "gateway_up; $_calls" 2>&1)
+if [[ "$out" == *"TEXERA_PORT=8086 compose --progress auto -p texera-local-dev --env-file /single-node/.env -f /single-node/docker-compose.yml -f $_fd_dir/overlay.yml up -d --no-deps gateway"* \
+      && "$out" == *"ok: gateway: up on :8086"* ]]; then
+    _pass "gateway_up: on its own, on :8086 (TEXERA_PORT over .env's), with the overlay"
+else
+    _fail "gateway_up did not start the gateway alone on :8086" "$out"
+fi
+
+out=$(_stack_run "lakekeeper_up; echo rc=\$?; $_calls" 2>&1)
+_migrate_at=$(printf '%s\n' "$out" | grep -n 'up -d lakekeeper-migrate$' | head -1 | cut -d: -f1)
+_wait_at=$(printf '%s\n' "$out" | grep -n ' wait texera-lakekeeper-migrate$' | head -1 | cut -d: -f1)
+_serve_at=$(printf '%s\n' "$out" | grep -n 'up -d --no-deps lakekeeper$' | head -1 | cut -d: -f1)
+if [[ "$out" == *"rc=0"* && -n "$_migrate_at" && -n "$_wait_at" && -n "$_serve_at" ]] \
+      && (( _migrate_at < _wait_at && _wait_at < _serve_at )); then
+    _pass "lakekeeper_up: migrates, waits for the migration, then starts Lakekeeper alone"
+else
+    _fail "lakekeeper_up order wrong" "$out"
+fi
+
+out=$(FAKE_MIGRATE_EXIT=1 _stack_run "lakekeeper_up; echo rc=\$?; $_calls" 2>&1)
+if [[ "$out" == *"rc=1"* && "$out" == *"migration did not finish"* && "$out" != *"--no-deps lakekeeper"* ]]; then
+    _pass "lakekeeper_up: a failed migration leaves Lakekeeper stopped"
+else
+    _fail "lakekeeper_up started Lakekeeper after a failed migration" "$out"
+fi
+
+out=$(FAKE_PORT_DOWN=1 _stack_run "lakekeeper_up; echo rc=\$?; $_calls" 2>&1)
+if [[ "$out" == *"rc=1"* && "$out" == *"access control service is not up"* && "$out" != *"--no-deps lakekeeper"* ]]; then
+    _pass "lakekeeper_up: no access control service, no Lakekeeper (it would stop at once)"
+else
+    _fail "lakekeeper_up started Lakekeeper without the access control service" "$out"
+fi
+
+out=$(_stack_run 'lakekeeper_up() { echo "via lakekeeper_up"; }; gateway_up() { echo "via gateway_up"; }
+    start_one lakekeeper; start_one gateway; start_one openfga; '"$_calls" 2>&1)
+if [[ "$out" == *"via lakekeeper_up"* && "$out" == *"via gateway_up"* ]] \
+      && [[ "$(printf '%s\n' "$out" | grep -c ' compose ')" == 1 ]] \
+      && [[ "$out" == *" up -d openfga"* && "$out" != *"--no-deps openfga"* ]]; then
+    _pass "start_one: lakekeeper and gateway through their own start, others with compose's deps"
+else
+    _fail "start_one does not route lakekeeper / gateway to their own start" "$out"
+fi
+
+out=$(FAKE_HAS_OPENFGA_DB=1 _stack_run "infra_require_openfga_database; echo rc=\$?; $_calls" 2>&1)
+if [[ "$out" == *"rc=0"* && "$out" == *"pg_isready -h 127.0.0.1"* ]]; then
+    _pass "infra_require_openfga_database: a volume with texera_openfga passes (ready over TCP)"
+else
+    _fail "infra_require_openfga_database refused a current volume" "$out"
+fi
+out=$(FAKE_HAS_OPENFGA_DB="" _stack_run "infra_require_openfga_database; echo rc=\$?" 2>&1); rc=$?
+if (( rc == 1 )) && [[ "$out" != *"rc="* && "$out" == *"no texera_openfga database"* \
+      && "$out" == *"docker compose -p texera-local-dev down --volumes"* ]]; then
+    _pass "infra_require_openfga_database: an older volume stops \`up\` and says how to start over"
+else
+    _fail "infra_require_openfga_database let an older volume through" "rc=$rc out=$out"
+fi
+rm -rf "$_fd_dir"
+
+# 46) In cmd_up the gateway comes up with the infra, before the build, and
+#     Lakekeeper after the services are launched (it needs the access control
+#     service), before the health panel.
+_up_body=$(_extract_fn cmd_up)
+_line_of() { printf '%s\n' "$_up_body" | grep -n "$1" | "$2" -1 | cut -d: -f1; }
+_gw=$(_line_of 'gateway_up' head); _build=$(_line_of 'build_all' head)
+_launch=$(_line_of 'nohup' tail); _lk=$(_line_of 'lakekeeper_up' head)
+_panel=$(_line_of 'tui_wait_panel' head)
+if [[ -n "$_gw" && -n "$_build" && -n "$_launch" && -n "$_lk" && -n "$_panel" ]] \
+      && (( _gw < _build && _launch < _lk && _lk < _panel )); then
+    _pass "cmd_up: gateway before the build, lakekeeper after the launches"
+else
+    _fail "cmd_up order wrong" "gateway=$_gw build=$_build launch=$_launch lakekeeper=$_lk panel=$_panel"
+fi
+
+# 47) The merged compose files: Lakekeeper reads its issuer from the host's
+#     access control service and the gateway reaches every service at the
+#     host's address. Uses the real `docker compose config` (no container).
+if docker compose version >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+    cfg=$(HOST_LAN_IP=10.1.2.3 TEXERA_PORT=8086 docker compose -p texera-local-dev \
+        --env-file "$REPO_ROOT/bin/single-node/.env" \
+        -f "$REPO_ROOT/bin/single-node/docker-compose.yml" \
+        -f "$REPO_ROOT/bin/local-dev/docker-compose.override.yml" config --format json 2>/dev/null)
+    if printf '%s' "$cfg" | python3 -c '
+import json, re, sys
+s = json.load(sys.stdin)["services"]
+assert s["lakekeeper"]["environment"]["LAKEKEEPER__OPENID_PROVIDER_URI"] == "http://10.1.2.3:9096/api/catalog-issuer"
+hosts = dict(re.split("[:=]", e, maxsplit=1) for e in s["gateway"]["extra_hosts"])
+assert hosts and set(hosts.values()) == {"10.1.2.3"}, hosts
+assert [str(p["published"]) for p in s["gateway"]["ports"]] == ["8086"]
+assert "lakekeeper-init" not in s
+' 2>/tmp/.local-dev-compose.err; then
+        _pass "compose config: lakekeeper's issuer and the gateway's services are on the host"
+    else
+        _fail "compose config of the local-dev overlay is wrong" "$(tail -1 /tmp/.local-dev-compose.err)"
+    fi
+    rm -f /tmp/.local-dev-compose.err
+else
+    _pass "skip: no docker compose or python3 (merged compose config check)"
+fi
+
+# 48) An exported HOST_LAN_IP (the README's override) is taken as it is, and the addresses
+#     derived from it are exported all the same: the gateway's container reaches the unit,
+#     and the JVMs and Lakekeeper the object store, at that address.
+require_fn=$(awk '/^_require_host_lan_ip\(\)/{f=1} f{print} f&&/^}/{exit}' "$MAIN_SH")
+if [[ -z "$require_fn" ]]; then
+    _fail "_require_host_lan_ip missing"
+else
+    got=$(
+        unset WORKFLOW_EXECUTION_SERVICE_ENDPOINT STORAGE_S3_ENDPOINT
+        _detect_host_lan_ip() { echo "192.0.2.99"; }  # not to be asked
+        eval "$require_fn"
+        HOST_LAN_IP=10.1.2.3
+        _require_host_lan_ip
+        echo "$HOST_LAN_IP $WORKFLOW_EXECUTION_SERVICE_ENDPOINT $STORAGE_S3_ENDPOINT"
+    )
+    if [[ "$got" == "10.1.2.3 http://10.1.2.3:8085 http://10.1.2.3:9000" ]]; then
+        _pass "_require_host_lan_ip: an exported HOST_LAN_IP still gives the unit's and RustFS's addresses"
+    else
+        _fail "_require_host_lan_ip with HOST_LAN_IP exported" "got: $got"
+    fi
+fi
+
 printf "\n%d passed, %d failed\n" "$PASS" "$FAIL"
 (( FAIL == 0 ))

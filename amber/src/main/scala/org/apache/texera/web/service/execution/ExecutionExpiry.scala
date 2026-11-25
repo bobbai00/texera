@@ -23,6 +23,7 @@ import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogStore,
+  ExecutionNamespace,
   ExecutionTables,
   WarehouseReadGuard
 }
@@ -57,12 +58,15 @@ object ExecutionExpiry {
   * Expiring an execution's results ([[expire]]) drops what its run produced: the result table
   * and the state table of each output port, its console table and its large binaries. Its log
   * and its statistics stay, so the history still tells how it ran, and its row is marked
-  * with when its results went and what it still holds. Results expire when a unit has started a
-  * later execution of the workflow ([[expireReplaced]]), which the unit shows from then on, and
-  * when they are older than results are kept ([[expirePast]]), which also deletes the
-  * execution's replay log. Deleting an execution drops everything it keeps ([[dropAll]]).
+  * with when its results went and what it still holds. What the execution's token can do ends
+  * with them ([[ExecutionCatalogAccess.revoke]]): nothing it may write is left. Results expire
+  * when a unit has started a later execution of the workflow ([[expireReplaced]]), which the
+  * unit shows from then on, and when they are older than results are kept ([[expirePast]]),
+  * which also deletes the execution's replay log. Deleting an execution drops everything it
+  * keeps ([[dropAll]]): its namespace with every table in it, its large binaries and its replay
+  * log.
   *
-  * An execution's tables are found by their names, which lists whole namespaces
+  * An execution's tables are in its own namespace, where they are found by their names
   * ([[ExecutionTables]]).
   *
   * Any number of Dashboard replicas may expire the same execution: dropping a table that is
@@ -73,7 +77,8 @@ object ExecutionExpiry {
   * A lake call that throws is thrown on by [[expire]] and [[dropAll]], never taken for "nothing
   * there": the row is then not marked, so whoever asked can ask again.
   *
-  * @param now the Dashboard service's clock, in epoch milliseconds
+  * @param now    the Dashboard service's clock, in epoch milliseconds
+  * @param access drops an execution's namespace, and ends what its token can do
   */
 class ExecutionExpiry(
     warehousesEnabled: Boolean = StorageConfig.warehouseEnabled,
@@ -81,7 +86,8 @@ class ExecutionExpiry(
     deleteBinaries: Long => Unit = LargeBinaryManager.deleteByExecution,
     deleteReplayLog: String => Unit = ExecutionExpiry.deleteReplayLog,
     now: () => Long = () => System.currentTimeMillis(),
-    batchSize: Int = ExecutionExpiry.BatchSize
+    batchSize: Int = ExecutionExpiry.BatchSize,
+    access: ExecutionCatalogAccess = ExecutionCatalogAccess.forDeployment
 ) extends LazyLogging {
 
   /**
@@ -166,31 +172,22 @@ class ExecutionExpiry(
 
   /**
     * Drops everything execution `eid` keeps outside its row, whether it is open or closed: its
-    * tables of every kind, its large binaries and its replay log. Every table is found by its
-    * name, so one that nothing else names goes too. For when the execution is deleted: its row
-    * is left to the caller. Nothing happens for an execution with no row. A replay log that
-    * cannot be deleted is logged and left.
+    * namespace with every table in it, which ends what its token can do
+    * ([[ExecutionCatalogAccess.drop]]), its large binaries and its replay log. For when the
+    * execution is deleted: its row is left to the caller. Nothing happens for an execution with
+    * no row. A replay log that cannot be deleted is logged and left.
     */
   def dropAll(eid: Long): Unit =
     ExecutionRecords.find(eid).foreach { execution =>
-      val dropped =
-        if (inDisabledWarehouse(execution)) None
-        else
-          Some(
-            ExecutionTables.dropNamed(
-              execution.workflowId,
-              execution.executionId,
-              execution.warehouse,
-              ExecutionTables.AllKinds
-            )
-          )
+      val disabled = inDisabledWarehouse(execution)
+      // Its token loses what it can do either way: that takes the catalog, not the warehouse.
+      if (disabled) access.revoke(eid) else access.drop(eid, execution.warehouse)
       deleteBinaries(eid)
       deleteReplayLogOf(eid)
       logger.info(
         s"Dropped what execution $eid of workflow ${execution.wid} kept: " +
-          dropped.fold("its tables are left where they are, as per-user warehouses are disabled")(
-            tables => s"${tables.size} tables"
-          ) + "."
+          (if (disabled) "its tables are left where they are, as per-user warehouses are disabled"
+           else s"its namespace ${ExecutionNamespace.of(eid)}, with every table in it") + "."
       )
     }
 
@@ -216,9 +213,9 @@ class ExecutionExpiry(
     }
 
   /**
-    * Drops what the run of execution `eid` produced, then marks its row, which is read again
-    * for that: an execution is expired only while it is closed, holds results, and, with
-    * `pastAge`, they are past that age.
+    * Drops what the run of execution `eid` produced and ends what its token can do, then marks
+    * its row, which is read again for that: an execution is expired only while it is closed,
+    * holds results, and, with `pastAge`, they are past that age.
     *
     * @param why why they are expired, as the log line goes on to say
     */
@@ -230,12 +227,15 @@ class ExecutionExpiry(
   ): Boolean =
     ExecutionRecords.unexpired(eid, pastAge).exists { execution =>
       if (inDisabledWarehouse(execution)) {
+        access.revoke(eid)
         logger.info(
-          s"Leaving the results of execution $eid where they are: per-user warehouses are disabled."
+          s"Leaving the results of execution $eid where they are: per-user warehouses are " +
+            "disabled. Its token can no longer reach them."
         )
         false
       } else {
         dropProduced(execution)
+        access.revoke(eid)
         if (withReplayLog) deleteReplayLogOf(eid)
         val kept = keptBytes(execution)
         val expired = ExecutionRecords.expire(eid, now(), kept, pastAge)
@@ -252,7 +252,7 @@ class ExecutionExpiry(
   private def inDisabledWarehouse(execution: ExecutionRecord): Boolean =
     WarehouseReadGuard.skipWhileDisabled(execution.logUri, warehousesEnabled)
 
-  /** Drops the tables of what the run of `execution` produced, found by their names. */
+  /** Drops the tables of what the run of `execution` produced, from its namespace. */
   private def dropProduced(execution: ExecutionRecord): Unit = {
     ExecutionTables.dropNamed(
       execution.workflowId,

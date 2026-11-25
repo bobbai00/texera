@@ -24,11 +24,13 @@ import org.apache.pekko.actor.{Actor, ActorSystem, AllForOneStrategy, Props, Sup
 import org.apache.pekko.testkit.{ImplicitSender, TestActorRef, TestKit, TestProbe}
 import org.apache.texera.amber.clustering.SingleNodeListener
 import org.apache.texera.amber.core.executor.{OpExecWithClassName, OperatorExecutor, OperatorInputs}
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.amber.core.tuple.{Tuple, TupleLike}
 import org.apache.texera.amber.core.virtualidentity.{
   ActorVirtualIdentity,
   ChannelIdentity,
-  EmbeddedControlMessageIdentity
+  EmbeddedControlMessageIdentity,
+  ExecutionIdentity
 }
 import org.apache.texera.amber.engine.architecture.coordinator.ReplayStatusUpdate
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
@@ -37,7 +39,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlcommands.{
   EmptyRequest,
   InitializeExecutorRequest
 }
-import org.apache.texera.amber.engine.architecture.scheduling.config.WorkerConfig
+import org.apache.texera.amber.engine.architecture.scheduling.config.{CatalogToken, WorkerConfig}
 import org.apache.texera.amber.engine.architecture.worker.WorkflowWorker.{
   ActorCommandElement,
   DPInputQueueElement,
@@ -95,6 +97,21 @@ class WorkflowWorkerSpec
     override val supervisorStrategy: SupervisorStrategy =
       AllForOneStrategy() { case _: Throwable => Stop }
     override def receive: Receive = Actor.emptyBehavior
+  }
+
+  "WorkflowWorker" should "hold its execution's token in its JVM as it starts" in {
+    // As on a machine of its own: the worker's configuration is all that brought the token.
+    val eid = ExecutionIdentity(9642001L)
+    assert(CatalogIdentity.registered(eid.id).isEmpty)
+
+    val worker = TestActorRef(
+      new WorkflowWorker(
+        WorkerConfig(identifier1, executionId = eid, catalogToken = CatalogToken("t-9642001")),
+        WorkerReplayInitialization()
+      )
+    )
+    try assert(CatalogIdentity.registered(eid.id).contains("t-9642001"))
+    finally system.stop(worker)
   }
 
   "WorkflowWorker" should "close an executor that is still open when it is stopped" in {

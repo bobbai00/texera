@@ -23,8 +23,10 @@ import com.google.common.base.Ticker
 import org.apache.texera.amber.core.storage.result.iceberg.IcebergDocument
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema, Tuple}
 import org.apache.texera.amber.util.IcebergUtil
+import org.apache.texera.common.tags.NonParallelTest
 import org.apache.iceberg.Table
 import org.apache.iceberg.catalog.{Catalog, Namespace, TableIdentifier}
+import org.scalatest.BeforeAndAfterEach
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
 
@@ -36,14 +38,24 @@ import java.time.Duration
   * a catalog displaced by replaceInstance stays open (the replacing caller may still
   * hold and later restore it -- wrap-and-restore, as amber's integration
   * IcebergDocumentSpec does), and holders resolve their catalog per operation so a
-  * replacement is visible immediately.
+  * replacement is visible immediately. A REST catalog is cached per warehouse and the
+  * [[CatalogIdentity]] of the requests through it.
   *
   * Size and idle eviction are exercised on isolated caches built through the
   * package-private factory (with a manual ticker), never on the JVM-wide cache
   * that parallel suites share. Tests that do touch the shared cache use their
   * own spec-unique warehouse keys.
+  *
+  * Tagged [[NonParallelTest]] so the suite gets a forked JVM of its own: it switches the
+  * JVM-wide [[CatalogIdentity]] mode, which says which cache entry every other suite's
+  * requests go through.
   */
-class IcebergCatalogInstanceSpec extends AnyFlatSpec with Matchers {
+@NonParallelTest
+class IcebergCatalogInstanceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterEach {
+
+  override def afterEach(): Unit =
+    try CatalogIdentity.use(CatalogIdentity.Anonymous)
+    finally super.afterEach()
 
   /** A closable catalog stub; the cache only ever needs `close()` on eviction. */
   private class FakeCatalog(catalogName: String) extends Catalog with AutoCloseable {
@@ -184,7 +196,68 @@ class IcebergCatalogInstanceSpec extends AnyFlatSpec with Matchers {
       original
   }
 
-  it should "keep a re-registered shared instance open" in {
+  "The cache key of a REST catalog" should
+    "give the requests of one identity one client per warehouse, of two identities two" in {
+    // Whatever catalog this JVM is configured with: CI runs these suites on the postgres one.
+    def key(warehouse: String, execution: Option[Long] = None): String =
+      IcebergCatalogInstance.cacheKey(warehouse, execution, catalogType = "rest")
+
+    // Anonymous: one client serves the requests about every execution, and about none.
+    val anonymous = key("a")
+    key("a", Some(7)) shouldBe anonymous
+    key("b") should not be anonymous
+
+    // Platform: so does another client, which sends the platform's token.
+    CatalogIdentity.use(CatalogIdentity.Platform)
+    val platform = key("a")
+    Seq(key("a", Some(7)), key("a", Some(8))) shouldBe Seq(platform, platform)
+    platform should not be anonymous
+    key("b") should not be platform
+
+    // Executions: a client per execution and warehouse; requests about none carry no token.
+    CatalogIdentity.use(CatalogIdentity.Executions)
+    val seven = key("a", Some(7))
+    Seq(key("a", Some(8)), key("b", Some(7)), platform, anonymous) should not contain seven
+    key("a", Some(8)) should not be key("b", Some(8))
+    key("a") shouldBe anonymous
+  }
+
+  "The cache key of a hadoop or postgres catalog" should
+    "be one for every warehouse and identity: neither catalog takes a token" in {
+    Seq(CatalogIdentity.Anonymous, CatalogIdentity.Platform, CatalogIdentity.Executions).foreach {
+      mode =>
+        CatalogIdentity.use(mode)
+        Seq("hadoop", "postgres").foreach { kind =>
+          withClue(s"$mode, $kind: ") {
+            IcebergCatalogInstance.cacheKey("a", Some(7), kind) shouldBe
+              IcebergCatalogInstance.cacheKey("b", None, kind)
+          }
+        }
+    }
+  }
+
+  "getInstance" should "find a catalog under the key of its warehouse and identity" in {
+    val warehouse = Some("catalog-cache-spec-identity")
+    val seven = new FakeCatalog("execution 7")
+    CatalogIdentity.use(CatalogIdentity.Executions)
+    IcebergCatalogInstance.replaceInstance(seven, warehouse, Some(7))
+    IcebergCatalogInstance.getInstance(warehouse, Some(7)) should be theSameInstanceAs seven
+  }
+
+  "A new REST client" should
+    "speak for its execution only where the requests about one have their own identity" in {
+    IcebergCatalogInstance.speaksFor(Some(7)) shouldBe None
+    IcebergCatalogInstance.speaksFor(None) shouldBe None
+
+    CatalogIdentity.use(CatalogIdentity.Platform)
+    IcebergCatalogInstance.speaksFor(Some(7)) shouldBe None
+
+    CatalogIdentity.use(CatalogIdentity.Executions)
+    IcebergCatalogInstance.speaksFor(Some(7)) shouldBe Some(7)
+    IcebergCatalogInstance.speaksFor(None) shouldBe None
+  }
+
+  "replaceInstance" should "keep a re-registered shared instance open" in {
     // LocalHadoopIcebergCatalog.ensure re-puts one shared instance from every suite
     // (and under several warehouse names); none of that may close it.
     val shared = new FakeCatalog("shared")

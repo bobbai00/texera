@@ -53,6 +53,7 @@ import org.apache.texera.amber.engine.common.ambermessage.{
   StateFrame,
   WorkflowFIFOMessage
 }
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.util.VirtualIdentityUtils.getFromActorIdForInputPortStorage
 import org.scalatest.flatspec.AnyFlatSpec
 
@@ -134,6 +135,8 @@ class InputPortMaterializationReaderThreadSpec extends AnyFlatSpec {
       states: Seq[(State, Long, String)] = Seq.empty
   ): URI = {
     val base = baseURI(operatorId)
+    // The tables are in the execution's namespace, which the Dashboard service makes.
+    TestUtils.makeExecutionNamespace(executionId.id)
     write(
       VFSURIFactory.stateURI(base),
       State.schema,

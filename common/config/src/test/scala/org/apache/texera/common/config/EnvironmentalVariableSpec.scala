@@ -90,6 +90,20 @@ class EnvironmentalVariableSpec extends AnyFlatSpec with Matchers {
     )
   }
 
+  it should "name the REST catalog's key prefix and token settings as storage.conf reads them" in {
+    val source = scala.io.Source.fromResource("storage.conf")
+    val storage =
+      try source.mkString
+      finally source.close()
+
+    Seq(
+      EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_KEY_PREFIX,
+      EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_TOKEN_ISSUER,
+      EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_TOKEN_AUDIENCE,
+      EnvironmentalVariable.ENV_ICEBERG_CATALOG_REST_TOKEN_EXECUTION_TTL_SECONDS
+    ).foreach(name => storage should include("${?" + name + "}"))
+  }
+
   "EnvironmentalVariable.get" should "return None for an unset variable" in {
     val absent = "TEXERA_DEFINITELY_UNSET_" + System.nanoTime().toString
     EnvironmentalVariable.get(absent) shouldBe None

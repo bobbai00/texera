@@ -54,8 +54,6 @@ def _full_config() -> dict:
         "icebergPostgresCatalogPassword": "pg-pass",
         "icebergRestCatalogUri": "",
         "icebergRestCatalogWarehouseName": "",
-        "icebergTableNamespace": "result_ns",
-        "icebergTableStateNamespace": "state_ns",
         "icebergFileStorageDirectoryPath": "/tmp/files",
         "icebergTableCommitBatchSize": "100",
         "s3Endpoint": "http://s3:9000",
@@ -96,8 +94,6 @@ def test_main_maps_named_config_to_storage_and_worker():
         "pg-pass",
         "",
         "",
-        "result_ns",
-        "state_ns",
         "/tmp/files",
         "100",
         "http://s3:9000",
@@ -126,8 +122,6 @@ def test_main_mapping_is_independent_of_key_order():
         "pg-pass",
         "",
         "",
-        "result_ns",
-        "state_ns",
         "/tmp/files",
         "100",
         "http://s3:9000",
@@ -139,6 +133,30 @@ def test_main_mapping_is_independent_of_key_order():
     python_worker.assert_called_once_with(
         worker_id="worker-1", host="localhost", output_port=5005
     )
+
+
+def test_main_takes_the_catalog_token_from_the_environment(monkeypatch):
+    """The JVM side hands the worker the token of its execution in the
+    TEXERA_ICEBERG_CATALOG_TOKEN environment variable, never in the startup config,
+    which travels on the command line where other processes can read it. main() has
+    to put it where every REST catalog of the process picks it up."""
+    monkeypatch.setenv("TEXERA_ICEBERG_CATALOG_TOKEN", "execution-token")
+    storage_patch, worker_patch, logger_patch = _patched_collaborators()
+    with storage_patch as storage_config, worker_patch, logger_patch:
+        entry.main(_encode(_full_config()))
+
+    assert storage_config.ICEBERG_REST_CATALOG_TOKEN == "execution-token"
+
+
+def test_main_leaves_the_catalog_token_empty_without_the_variable(monkeypatch):
+    """Without the variable, as for a catalog that lets every request through, the
+    token is empty, so no REST catalog of the process is given one."""
+    monkeypatch.delenv("TEXERA_ICEBERG_CATALOG_TOKEN", raising=False)
+    storage_patch, worker_patch, logger_patch = _patched_collaborators()
+    with storage_patch as storage_config, worker_patch, logger_patch:
+        entry.main(_encode(_full_config()))
+
+    assert storage_config.ICEBERG_REST_CATALOG_TOKEN == ""
 
 
 def test_main_sets_r_home_when_r_path_present(monkeypatch):
@@ -384,7 +402,7 @@ def test_script_entry_point_starts_the_worker_from_argv(restored_loguru_sink):
 
 def test_parse_names_the_missing_key_on_the_missing_side():
     """The companion of test_parse_rejects_an_unexpected_key: a key the JVM stopped
-    sending has to be reported as *missing*. The 19-way parametrized test above can
+    sending has to be reported as *missing*. The 17-way parametrized test above can
     only afford a loose match, so the side of the diagnostic is fenced here."""
     config = _full_config()
     del config["s3Region"]

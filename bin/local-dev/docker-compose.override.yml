@@ -19,7 +19,10 @@
 # bin/single-node was designed so the texera microservices run inside the same
 # compose network as the infra — postgres/lakefs/lakekeeper/litellm therefore
 # don't publish their ports to the host. The local-dev flow runs the JVM and
-# Node services *natively* on the host, so we expose each backend port here.
+# Node services *natively* on the host, so we expose each backend port here,
+# and point the containers that call those services at the host. They reach it
+# at HOST_LAN_IP, which bin/local-dev.sh detects and exports: the host's LAN IP
+# is reachable both from the containers and from the host itself.
 
 services:
   # A host-native backend (sbt / IntelliJ) emits OTLP to the collector that
@@ -38,36 +41,41 @@ services:
     ports:
       - "8000:8000"
 
+  # When it starts, Lakekeeper reads the key it checks every catalog token with from the access
+  # control service, which runs on the host here.
   lakekeeper:
     ports:
       - "8181:8181"
+    environment:
+      LAKEKEEPER__OPENID_PROVIDER_URI: http://${HOST_LAN_IP}:9096/api/catalog-issuer
 
   litellm:
     ports:
       - "4000:4000"
 
-  # The default .env hardcodes STORAGE_S3_ENDPOINT=http://texera-rustfs:9000
-  # — only routable inside the docker compose network. lakekeeper-init bakes
-  # that string into the warehouse's storage profile, which Lakekeeper then
-  # both dials itself (for s3 ops) AND returns to clients. The host-native
-  # JVMs in local-dev mode can't resolve `texera-rustfs`.
-  #
-  # Use whatever STORAGE_S3_ENDPOINT the parent process exported. The
-  # wrapper script (bin/local-dev.sh) detects the host's LAN IP at startup
-  # and exports e.g. http://192.168.1.x:9000 — reachable from both sides:
-  #   • lakekeeper container: out via docker bridge → host's published :9000
-  #   • host JVM:             straight to host's published :9000
-  # If the env wasn't exported (script not used), fall back to localhost
-  # which at least keeps the warehouse creation from blowing up.
-  lakekeeper-init:
-    environment:
-      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-http://localhost:9000}
+  # The gateway carries a computing unit's websocket: the dev server's proxy sends /wsapi to it
+  # (frontend/proxy.config.json), and the access control service says who the caller is and
+  # where the unit is, as in bin/single-node. envoy.yaml dials each service by its compose name,
+  # and here each name is the host's address. The unit's address the access control service
+  # answers is the host's too (WORKFLOW_EXECUTION_SERVICE_ENDPOINT, set by bin/local-dev.sh,
+  # which also gives the gateway its own host port: texera-web holds 8080).
+  gateway:
+    extra_hosts:
+      - "dashboard-service:${HOST_LAN_IP}"
+      - "workflow-compiling-service:${HOST_LAN_IP}"
+      - "file-service:${HOST_LAN_IP}"
+      - "config-service:${HOST_LAN_IP}"
+      - "workflow-computing-unit-managing-service:${HOST_LAN_IP}"
+      - "access-control-service:${HOST_LAN_IP}"
+      - "agent-service:${HOST_LAN_IP}"
+      - "notebook-migration-service:${HOST_LAN_IP}"
+      - "result-service:${HOST_LAN_IP}"
 
-  # The default .env points TEXERA_ORIGIN at the gateway's origin (:8080), but
-  # local-dev has no gateway — the Angular dev server serves the app on :4200.
-  # That origin is what Jupyter puts in its iframe CSP frame-ancestors and
-  # what custom.js uses as the postMessage targetOrigin, so leaving it at
-  # :8080 makes the browser refuse to render the notebook panel.
+  # The default compose file points TEXERA_ORIGIN at the gateway's origin (:8080), but
+  # the Angular dev server serves the app here, on :4200 (local-dev's gateway carries only
+  # the computing unit's websocket). That origin is what Jupyter puts in its iframe CSP
+  # frame-ancestors and what custom.js uses as the postMessage targetOrigin, so leaving it
+  # at :8080 makes the browser refuse to render the notebook panel.
   jupyter:
     environment:
       TEXERA_ORIGIN: ${TEXERA_ORIGIN:-http://localhost:4200}

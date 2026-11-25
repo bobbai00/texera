@@ -23,9 +23,11 @@ import com.github.dirkraft.dropwizard.fileassets.FileAssetsBundle
 import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.AuthValueFactoryProvider
 import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, SubstitutingSourceProvider}
+import io.dropwizard.lifecycle.Managed
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
 import org.apache.texera.common.config.StorageConfig
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.amber.engine.common.Utils
 import org.apache.texera.amber.util.{JSONUtils, ObjectMapperUtils}
 import org.apache.texera.auth.SessionUser
@@ -53,6 +55,7 @@ import org.apache.texera.web.resource.dashboard.user.workflow.{
   WorkflowResource,
   WorkflowVersionResource
 }
+import org.apache.texera.web.service.CatalogSetup
 import org.apache.texera.web.service.execution.ExecutionClosingJob
 import org.eclipse.jetty.server.session.SessionHandler
 import org.eclipse.jetty.servlet.{ErrorPageErrorHandler, FilterHolder}
@@ -104,6 +107,16 @@ class TexeraWebApplication
   }
 
   override def run(configuration: TexeraWebConfiguration, environment: Environment): Unit = {
+    // Every request of this service to the catalog carries the platform's token.
+    CatalogIdentity.use(CatalogIdentity.Platform)
+    // The catalog is made ready once the server starts, off its start: the service answers
+    // meanwhile, and a create waits for it.
+    environment
+      .lifecycle()
+      .manage(new Managed {
+        override def start(): Unit = CatalogSetup.forDeployment.ensureInBackground()
+        override def stop(): Unit = ()
+      })
     org.apache.texera.observability.OtelInit.init("texera-web-application")
     ObjectMapperUtils.warmupObjectMapperForOperatorsSerde()
 

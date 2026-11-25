@@ -62,6 +62,7 @@ trait RecordTables extends BeforeAndAfterAll { this: Suite =>
     super.beforeAll()
     warehouseDir = Files.createTempDirectory("record-tables-spec")
     catalog = IcebergUtil.createHadoopCatalog("record-tables-spec", warehouseDir)
+    IcebergUtil.createNamespace(catalog, namespace)
   }
 
   override def afterAll(): Unit =

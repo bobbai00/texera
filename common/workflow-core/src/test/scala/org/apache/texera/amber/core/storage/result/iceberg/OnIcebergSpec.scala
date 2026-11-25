@@ -64,6 +64,7 @@ class OnIcebergSpec extends AnyFlatSpec with BeforeAndAfterAll {
   override def beforeAll(): Unit = {
     warehouseDir = Files.createTempDirectory("on-iceberg-spec")
     catalog = IcebergUtil.createHadoopCatalog("on-iceberg-spec", warehouseDir)
+    IcebergUtil.createNamespace(catalog, tableNamespace)
     IcebergCatalogInstance.replaceInstance(catalog, Some(specWarehouse))
   }
 
@@ -95,6 +96,7 @@ class OnIcebergSpec extends AnyFlatSpec with BeforeAndAfterAll {
     val writer = new IcebergTableWriter[Tuple](
       s"writer_${UUID.randomUUID().toString.replace("-", "")}",
       Some(specWarehouse),
+      None,
       tableNamespace,
       tableName,
       icebergSchema,

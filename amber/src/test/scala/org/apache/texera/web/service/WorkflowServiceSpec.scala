@@ -61,6 +61,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.executionrecord.RecordingExecutionRecorder
 import org.apache.texera.amber.engine.common.executionruntimestate.ExecutionMetadataStore
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.error.ErrorUtils.getStackTraceWithAllCauses
 import org.apache.texera.dao.jooq.generated.tables.pojos.User
 import org.apache.texera.web.model.websocket.event.ExecutionDurationUpdateEvent
@@ -629,8 +630,9 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     service.executionService.onNext(held)
     val ownSubscription = new TrackingDisposable
     service.addSubscription(ownSubscription)
-    // What the run stored: the result of a port, and its console.
+    // What the run stored: the result of a port, and its console, in its execution's namespace.
     val (wid, eid) = (WorkflowIdentity(testWid.toLong), ExecutionIdentity(heldIdleEid.toLong))
+    TestUtils.makeExecutionNamespace(eid.id)
     val result = VFSURIFactory.resultURI(
       VFSURIFactory.createPortBaseURI(
         wid,
@@ -651,7 +653,7 @@ class WorkflowServiceSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       // and the service lets go of everything, the run it holds included, which never started
       ownSubscription.isDisposed shouldBe true
       service.results.unsubscribeCount shouldBe 1
-    } finally Seq(result, console).foreach(ExecutionTables.drop)
+    } finally TestUtils.dropExecutionNamespace(eid.id)
   }
 
   it should "record a run that has not ended as killed once idle, saying that nobody watched it" in {

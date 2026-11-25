@@ -29,6 +29,7 @@ import org.apache.texera.amber.core.executor.{
   OpExecWithClassName,
   OperatorInputs
 }
+import org.apache.iceberg.catalog.{Namespace, SupportsNamespaces}
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   ConsoleRow,
@@ -36,6 +37,9 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
+  ExecutionNamespace,
+  ExecutionTables,
+  IcebergCatalogInstance,
   InputFileLocator,
   InputLink,
   InputLinker,
@@ -77,7 +81,7 @@ import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.common.compiler.{CompileFor, PlanToRun}
 import org.apache.texera.common.compiler.model.{LogicalLink, LogicalPlanPojo}
-import org.apache.texera.common.config.ApplicationConfig
+import org.apache.texera.common.config.{ApplicationConfig, StorageConfig}
 import org.apache.texera.dao.{MockTexeraDB, SiteSettings, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
   COMPUTING_UNIT_USER_ACCESS,
@@ -147,6 +151,7 @@ import org.apache.texera.web.service.execution.{
   ComputingUnitClient,
   CostHintsLoader,
   CreatedExecution,
+  ExecutionCatalogAccess,
   ExecutionCloser,
   ExecutionCreator,
   ExecutionExpiry,
@@ -155,7 +160,9 @@ import org.apache.texera.web.service.execution.{
   ExecutionStart,
   FixtureCompilingService,
   OperatorUpdates,
+  RecordingCatalogAccess,
   RecordingComputingUnits,
+  RecordingLakekeeper,
   StubCompilingServer,
   WorkflowCompilingService,
   WorkflowCompilingServiceClient
@@ -188,9 +195,11 @@ import scala.util.{Try, Using}
   * Creating an execution at the Dashboard service, through [[ExecutionResource]].
   *
   * The rows are in `MockTexeraDB`; results and consoles are tables of the catalog the build's
-  * tests use (the Postgres JDBC catalog in CI), named after this suite's own workflow and
-  * execution ids. The executions it creates take ids after 962000, set in `beforeAll`, so their
-  * tables and their large binaries' prefixes are this suite's own too. The compiling
+  * tests use (the Postgres JDBC catalog in CI), in the namespaces of this suite's own
+  * executions, which a create makes as on a REST catalog, its catalog users and grants kept
+  * rather than made ([[RecordingCatalogAccess]]). The executions it creates take ids after
+  * 962000, set in `beforeAll`, so their namespaces and their large binaries' prefixes are this
+  * suite's own too. The compiling
   * service is a fixture that compiles in this JVM ([[FixtureCompilingService]]), with the
   * fixture resolvers of `TestOperators` (scan files on the local disk) unless a case binds
   * them otherwise, or a server a case asks over HTTP ([[StubCompilingServer]]); files are
@@ -257,10 +266,33 @@ class ExecutionResourceSpec
   private val requestUri = new URI("http://texera.example:4200/api/executions")
   private val logRoot = new URI("file:///tmp/texera-spec-replay-logs/")
 
-  /** Every plan, log, result and console table this suite makes, dropped after it. */
-  private val madePlans = mutable.ListBuffer.empty[URI]
-  private val madeLogs = mutable.ListBuffer.empty[URI]
-  private val madeTables = mutable.ListBuffer.empty[URI]
+  /**
+    * The Dashboard's catalog access for every create of the suite: it makes each execution's
+    * namespace in the catalog the build's tests use, and keeps its catalog user, its grants and
+    * its token, as on a REST catalog.
+    */
+  private val catalogAccess = new RecordingCatalogAccess()
+
+  /** The warehouse of an execution that names none. */
+  private val defaultWarehouse = StorageConfig.icebergRESTCatalogWarehouseName
+
+  /**
+    * The namespace of every execution the suite gave tables to, in its warehouse, each dropped
+    * with its tables after the suite; with those of the executions it created.
+    */
+  private val madeNamespaces = mutable.Set.empty[(Long, Option[String])]
+
+  /** Makes the namespace of execution `eid` in `warehouse`, as the Dashboard makes it. */
+  private def withNamespace(eid: Long, warehouse: Option[String] = None): Unit = {
+    TestUtils.makeExecutionNamespace(eid, warehouse)
+    madeNamespaces.synchronized(madeNamespaces += ((eid, warehouse)))
+  }
+
+  private def hasNamespace(eid: Long): Boolean =
+    IcebergCatalogInstance
+      .getInstance()
+      .asInstanceOf[SupportsNamespaces]
+      .namespaceExists(Namespace.of(ExecutionNamespace.of(eid)))
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()
@@ -378,8 +410,9 @@ class ExecutionResourceSpec
 
   override protected def afterAll(): Unit =
     try {
-      madeLogs.foreach(uri => Try(ExecutionLogStore.drop(uri)))
-      madeTables.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
+      (madeNamespaces ++ catalogAccess.opened.keys.map(_ -> None)).foreach {
+        case (eid, warehouse) => Try(ExecutionTables.dropNamespace(eid, warehouse))
+      }
     } finally {
       closeConnectionPool()
       super.afterAll()
@@ -442,8 +475,8 @@ class ExecutionResourceSpec
       ExecutionIdentity(eid.toLong),
       None
     )
+    withNamespace(eid.toLong)
     ConsoleMessageStore.create(uri)
-    madeTables += uri
     uri
   }
 
@@ -519,7 +552,7 @@ class ExecutionResourceSpec
 
   /** An expiry whose lake calls are the stores', and which deletes no large binary. */
   private val expiryWithoutBinaries =
-    new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
+    new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => (), access = catalogAccess)
 
   /**
     * The creator under test, set up as the case needs. Its compiling service compiles in this
@@ -534,6 +567,7 @@ class ExecutionResourceSpec
     * @param linker    signs the plan's links; the fixture server's, unless a case gives another
     * @param compiling the compiling service, for a case that asks one of its own
     * @param units     the units the plans are handed to; the suite's, which keep them
+    * @param access    makes each execution's namespace and token; the suite's, which keeps them
     */
   private class FixtureCreator(
       logRoot: Option[URI] = None,
@@ -547,7 +581,8 @@ class ExecutionResourceSpec
       compileDeadline: FiniteDuration = ExecutionCreator.CompileDeadline,
       val resolvedFor: mutable.ListBuffer[Integer] = mutable.ListBuffer.empty,
       compiling: Option[WorkflowCompilingService] = None,
-      units: ComputingUnitClient = handedOver
+      units: ComputingUnitClient = handedOver,
+      access: ExecutionCatalogAccess = catalogAccess
   ) extends ExecutionCreator(
         compiling = compiling.getOrElse(
           new FixtureCompilingService(bindingsFor = uid => {
@@ -564,7 +599,8 @@ class ExecutionResourceSpec
         background = background,
         closer = closer,
         compileDeadline = compileDeadline,
-        expiry = expiry
+        expiry = expiry,
+        access = access
       )
 
   private def sessionUser(uid: Int): SessionUser = {
@@ -807,10 +843,25 @@ class ExecutionResourceSpec
     execution.eid should be > firstCreatedEid.toLong
     // The answer is the execution's id, and nothing of its plan.
     answer.getEntity shouldBe CreateExecutionResponse(execution.eid)
-    // The plan went to the unit the execution was created for, once, for the caller.
+    // The plan went to the unit the execution was created for, once, for the caller, with the
+    // token the execution's catalog requests carry.
+    val token = catalogAccess.opened.get(execution.eid)
+    token shouldBe defined
     handedOver.starts.drop(handedBefore) shouldBe Seq(
-      RecordingComputingUnits.Handed(unitCuid, execution.plan, creatorUid)
+      RecordingComputingUnits.Handed(unitCuid, execution.plan, creatorUid, token)
     )
+    // The run writes into a namespace of its own, which only its catalog user may use.
+    hasNamespace(execution.eid) shouldBe true
+    val user = ExecutionCatalogAccess.userOf(execution.eid)
+    catalogAccess.management.calls should contain allOf (
+      RecordingLakekeeper.UserMade(user, s"execution ${execution.eid}"),
+      RecordingLakekeeper.Granted(
+        RecordingLakekeeper.idOf(defaultWarehouse, ExecutionNamespace.of(execution.eid)),
+        user,
+        ExecutionCatalogAccess.Grants
+      )
+    )
+    catalogAccess.management.revokedSinceMade(user) shouldBe false
 
     val stored = row(execution.eid)
     // Open: nothing of its closing record is written until it is over.
@@ -1573,15 +1624,32 @@ class ExecutionResourceSpec
 
   /**
     * Units that answer `answer` to the plan they are handed, and note the result tables
-    * recorded for its execution by then.
+    * recorded for its execution by then, and whether its namespace was there.
     */
   private class NotingUnits(answer: Handover) extends RecordingComputingUnits(answer) {
     @volatile var rowsAtHandover: Seq[(String, String, String)] = Nil
+    @volatile var namespaceAtHandover: Boolean = false
 
-    override def start(cuid: Int, plan: String, uid: Int): Handover = {
-      rowsAtHandover = ExecutionStart.executionNamedBy(plan).toSeq.flatMap(resultRowsOf)
-      super.start(cuid, plan, uid)
+    override def start(
+        cuid: Int,
+        plan: String,
+        uid: Int,
+        catalogToken: Option[String]
+    ): Handover = {
+      val eid = ExecutionStart.executionNamedBy(plan)
+      rowsAtHandover = eid.toSeq.flatMap(resultRowsOf)
+      namespaceAtHandover = eid.exists(hasNamespace)
+      super.start(cuid, plan, uid, catalogToken)
     }
+  }
+
+  /**
+    * Fails unless what execution `eid` was let do in the lake is gone: its namespace, with every
+    * table a refused start may have made in it, and its catalog user.
+    */
+  private def accessDropped(eid: Long): Unit = {
+    hasNamespace(eid) shouldBe false
+    catalogAccess.management.revokedSinceMade(ExecutionCatalogAccess.userOf(eid)) shouldBe true
   }
 
   /**
@@ -1612,16 +1680,46 @@ class ExecutionResourceSpec
     val eid = newestEid.toLong
     failure.getMessage shouldBe
       s"Execution $eid could not be started on computing unit $unitCuid. $why"
-    // Handed over once, with its result tables recorded by then: a unit that starts it finds
-    // them.
+    // Handed over once, with its result tables recorded and its namespace made by then: a unit
+    // that starts it finds them.
     units.starts.map(_.cuid) shouldBe Seq(unitCuid)
+    units.starts.map(_.catalogToken) shouldBe Seq(catalogAccess.opened.get(eid))
     units.rowsAtHandover should not be empty
+    units.namespaceAtHandover shouldBe true
     // No unit has the plan, so none will ever start it: closed as failed, with the unit's
-    // reason, its results marked expired and the rows of its result tables gone.
+    // reason, its results marked expired and the rows of its result tables gone, and its
+    // namespace dropped with what it was let do.
     closedAtCreate(eid, s"its computing unit did not start it: $why", since)
     resultRowsOf(eid) shouldBe empty
+    accessDropped(eid)
     // A create that fails replaces no run of the unit.
     left shouldBe empty
+  }
+
+  it should "drop the tables a start its unit refused made, with the execution's namespace" in {
+    // A unit that took the start, made its run's log, and then failed to set the run up.
+    val units = new NotingUnits(Refused("The run could not be set up.")) {
+      override def start(
+          cuid: Int,
+          plan: String,
+          uid: Int,
+          catalogToken: Option[String]
+      ): Handover = {
+        ExecutionStart.executionNamedBy(plan).foreach { eid =>
+          ExecutionLogStore.create(logOfUri(eid), System.currentTimeMillis(), 30000L)
+        }
+        super.start(cuid, plan, uid, catalogToken)
+      }
+    }
+
+    val failure = intercept[WebApplicationException] {
+      post(request(), creator = new FixtureCreator(units = units))
+    }
+
+    failure.getResponse.getStatus shouldBe 409
+    val eid = newestEid.toLong
+    hasTable(logOfUri(eid)) shouldBe false
+    accessDropped(eid)
   }
 
   it should "answer 503, and record the execution FAILED, when its unit cannot be reached" in {
@@ -1640,6 +1738,7 @@ class ExecutionResourceSpec
     units.rowsAtHandover should not be empty
     closedAtCreate(eid, "its computing unit could not be reached", since)
     resultRowsOf(eid) shouldBe empty
+    accessDropped(eid)
     left shouldBe empty
   }
 
@@ -1656,7 +1755,8 @@ class ExecutionResourceSpec
       s"Computing unit $unitCuid did not answer whether it started execution $eid. It may be " +
         "running."
     // The unit was sent the plan and may run it: the row stays open, for the closing job to
-    // close by what the execution's log shows, and its result tables stay recorded.
+    // close by what the execution's log shows, and its result tables stay recorded. So does
+    // what it may do in the lake.
     units.starts.map(_.cuid) shouldBe Seq(unitCuid)
     val open = row(eid)
     open.getOutcome shouldBe null
@@ -1665,8 +1765,56 @@ class ExecutionResourceSpec
     open.getResultsExpiredAt shouldBe null
     resultRowsOf(eid) should not be empty
     resultRowsOf(eid) shouldBe units.rowsAtHandover
+    hasNamespace(eid) shouldBe true
+    catalogAccess.management.revokedSinceMade(ExecutionCatalogAccess.userOf(eid)) shouldBe false
     // Whether it replaced the unit's last run is not known yet.
     left shouldBe empty
+  }
+
+  // --- the namespace and the token cannot be made ---
+
+  it should "answer 500, record the execution FAILED, and hand no unit its plan, when the catalog is not ready" in {
+    val lakeDown = new RuntimeException("the catalog is not set up")
+    val management = new RecordingLakekeeper()
+    val access = new ExecutionCatalogAccess(management, rest = true, setup = () => throw lakeDown)
+    val since = System.currentTimeMillis()
+    val handedBefore = handedOver.starts.size
+
+    val failure = intercept[InternalServerErrorException] {
+      post(request(), creator = new FixtureCreator(access = access))
+    }
+
+    failure.getResponse.getStatus shouldBe 500
+    failure.getCause shouldBe lakeDown
+    val eid = newestEid.toLong
+    failure.getMessage shouldBe s"Execution $eid could not be created: its plan could not be made."
+    closedAtCreate(eid, "its plan could not be made", since)
+    handedOver.starts should have size handedBefore.toLong
+    hasNamespace(eid) shouldBe false
+    management.deleted shouldBe Seq(ExecutionCatalogAccess.userOf(eid))
+  }
+
+  it should "drop the namespace it made when the execution's catalog user cannot be granted it" in {
+    val refused = new RuntimeException("Lakekeeper grant failed (HTTP 403)")
+    val management = new RecordingLakekeeper {
+      override def grantNamespace(namespaceId: String, user: String, kinds: Seq[String]): Unit =
+        throw refused
+    }
+    val access = new ExecutionCatalogAccess(management, rest = true, setup = () => ())
+    val since = System.currentTimeMillis()
+    val handedBefore = handedOver.starts.size
+
+    val failure = intercept[InternalServerErrorException] {
+      post(request(), creator = new FixtureCreator(access = access))
+    }
+
+    failure.getCause shouldBe refused
+    val eid = newestEid.toLong
+    closedAtCreate(eid, "its plan could not be made", since)
+    handedOver.starts should have size handedBefore.toLong
+    hasNamespace(eid) shouldBe false
+    // The make starts by deleting any stale user of the id; the drop deletes the one it made.
+    management.deleted shouldBe Seq.fill(2)(ExecutionCatalogAccess.userOf(eid))
   }
 
   // --- the compiling service, asked over HTTP ---
@@ -2330,8 +2478,8 @@ class ExecutionResourceSpec
   /** Makes the log of execution `eid`, empty, as its unit does when it starts the run. */
   private def logOf(eid: Long, warehouse: Option[String] = None): URI = {
     val uri = logOfUri(eid, warehouse)
+    withNamespace(eid, warehouse)
     ExecutionLogStore.create(uri, createdAt(eid), 30000L)
-    madeLogs += uri
     uri
   }
 
@@ -2677,8 +2825,8 @@ class ExecutionResourceSpec
   private def consoleOf(eid: Long, warehouse: Option[String] = None): URI = {
     val uri =
       ConsoleMessageStore.consoleUri(WorkflowIdentity(testWid), ExecutionIdentity(eid), warehouse)
+    withNamespace(eid, warehouse)
     ConsoleMessageStore.create(uri)
-    madeTables += uri
     uri
   }
 

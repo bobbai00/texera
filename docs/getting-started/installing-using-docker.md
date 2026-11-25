@@ -250,7 +250,9 @@ Stop the conflicting process, or change Texera's ports following the instruction
 
 ### Volume conflicts
 
-PostgreSQL only runs the database initialization scripts on first startup (when its data volume is empty). If you previously started Texera and then ran `docker compose down` (without `-v`), the data volume still exists. On the next `docker compose up`, the initialization is skipped, which can cause services like lakeFS to fail because their required databases were never created.
+PostgreSQL only runs the database initialization scripts on first startup (when its data volume is empty). If you previously started Texera and then ran `docker compose down` (without `-v`), the data volume still exists. On the next `docker compose up`, the initialization is skipped, which can cause services like lakeFS or OpenFGA to fail because their required databases were never created.
+
+The same holds after an upgrade from a version whose lake catalog did not check who may read and write each execution's tables: OpenFGA, where the catalog keeps these permissions, has no database in the old volume, and the old catalog cannot be carried over.
 
 To resolve this, remove all existing volumes and start fresh:
 

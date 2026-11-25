@@ -43,6 +43,7 @@ class PauseSpec extends RetryingE2ESpec("PauseSpec", specId = 2) {
   ): Unit = {
     val workflow =
       TestUtils.buildWorkflow(operators, links, TestUtils.workflowContext(specId))
+    TestUtils.makeExecutionNamespace(workflow.context.executionId.id)
     val client =
       new AmberClient(
         system,

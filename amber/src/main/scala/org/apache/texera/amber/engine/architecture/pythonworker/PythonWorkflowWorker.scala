@@ -35,7 +35,7 @@ import org.apache.texera.amber.engine.architecture.pythonworker.WorkerBatchInter
   EmbeddedControlMessageElement
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlcommands.EmbeddedControlMessage
-import org.apache.texera.amber.engine.architecture.scheduling.config.WorkerConfig
+import org.apache.texera.amber.engine.architecture.scheduling.config.{CatalogToken, WorkerConfig}
 import org.apache.texera.amber.engine.common.actormessage.{Backpressure, CreditUpdate}
 import org.apache.texera.amber.engine.common.ambermessage.WorkflowMessage.getInMemSize
 import org.apache.texera.amber.engine.common.ambermessage._
@@ -46,7 +46,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Path, Paths}
 import java.util.Base64
 import java.util.concurrent.{ExecutorService, Executors}
-import scala.sys.process.{BasicIO, Process}
+import scala.sys.process.{BasicIO, Process, ProcessBuilder}
 
 object PythonWorkflowWorker {
 
@@ -91,8 +91,9 @@ object PythonWorkflowWorker {
     * Assemble the Python worker startup configuration as named (key, value) pairs.
     * Worker-specific values are passed in; storage-related values are read from the
     * shared StorageConfig (Postgres/REST catalog fields are blank unless that catalog
-    * type is active). Returned as a sequence (not a Map) so encodeStartupConfig can
-    * detect a duplicate key.
+    * type is active). A table's namespace is not among them: the worker finds it from the
+    * execution in the table's URI. Returned as a sequence (not a Map) so encodeStartupConfig
+    * can detect a duplicate key.
     */
   def buildStartupConfig(
       workerId: String,
@@ -117,8 +118,6 @@ object PythonWorkflowWorker {
       "icebergRestCatalogUri" -> (if (isRest) StorageConfig.icebergRESTCatalogUri else ""),
       "icebergRestCatalogWarehouseName" ->
         (if (isRest) StorageConfig.icebergRESTCatalogWarehouseName else ""),
-      "icebergTableNamespace" -> StorageConfig.icebergTableResultNamespace,
-      "icebergTableStateNamespace" -> StorageConfig.icebergTableStateNamespace,
       "icebergFileStorageDirectoryPath" -> StorageConfig.fileStorageDirectoryPath.toString,
       "icebergTableCommitBatchSize" -> StorageConfig.icebergTableCommitBatchSize.toString,
       "s3Endpoint" -> StorageConfig.s3Endpoint,
@@ -128,6 +127,27 @@ object PythonWorkflowWorker {
       "s3LargeBinariesBaseUri" -> largeBinaryBaseUri
     )
   }
+
+  /** The variable of a Python worker's environment that holds its execution's catalog token. */
+  val CatalogTokenVariable = "TEXERA_ICEBERG_CATALOG_TOKEN"
+
+  /**
+    * The process of a Python worker: `pythonBin` runs `entryScript` with the worker's
+    * `startupConfig` as its one argument ([[encodeStartupConfig]]), and finds the token of the
+    * worker's execution for the lake's catalog in [[CatalogTokenVariable]], which is empty for
+    * none. The token is not an argument: every process on the machine can read those.
+    */
+  def pythonProcess(
+      pythonBin: String,
+      entryScript: String,
+      startupConfig: Seq[(String, String)],
+      catalogToken: CatalogToken
+  ): ProcessBuilder =
+    Process(
+      Seq(pythonBin, "-u", entryScript, encodeStartupConfig(startupConfig)),
+      None,
+      CatalogTokenVariable -> catalogToken.value
+    )
 }
 
 /**
@@ -137,6 +157,9 @@ class PythonWorkflowWorker(
     workerConfig: WorkerConfig,
     environments: PythonEnvironmentInstaller = PythonEnvironmentInstaller.forThisUnit
 ) extends WorkflowActor(replayLogConfOpt = None, actorId = workerConfig.workerId) {
+  // As a JVM worker does: what is asked of the lake's catalog in this JVM about the worker's
+  // execution carries the execution's token. The Python process is handed it too.
+  workerConfig.holdCatalogToken()
 
   // For receiving the Python server port number that will be available later
   private lazy val portNumberPromise = Promise[Int]()
@@ -272,14 +295,9 @@ class PythonWorkflowWorker(
       workerConfig.largeBinaryBaseUri
     )
 
-    pythonServerProcess = Process(
-      Seq(
-        pythonBin,
-        "-u",
-        udfEntryScriptPath,
-        PythonWorkflowWorker.encodeStartupConfig(startupConfig)
-      )
-    ).run(BasicIO.standard(false))
+    pythonServerProcess = PythonWorkflowWorker
+      .pythonProcess(pythonBin, udfEntryScriptPath, startupConfig, workerConfig.catalogToken)
+      .run(BasicIO.standard(false))
   }
 
   override def loadFromCheckpoint(chkpt: CheckpointState): Unit = ???

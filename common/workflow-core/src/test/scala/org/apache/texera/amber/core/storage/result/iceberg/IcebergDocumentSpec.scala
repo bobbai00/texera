@@ -66,6 +66,7 @@ class IcebergDocumentSpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   override def beforeAll(): Unit = {
     super.beforeAll()
     LocalHadoopIcebergCatalog.ensure()
+    IcebergUtil.createNamespace(IcebergCatalogInstance.getInstance(), tableNamespace)
   }
 
   private def freshTableName(): String =

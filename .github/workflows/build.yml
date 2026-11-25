@@ -548,6 +548,9 @@ jobs:
         # branches run `migrate` then `serve`, then poll the binary's
         # built-in `healthcheck` subcommand until ready. Failure dumps
         # the container logs (Linux) or /tmp/lakekeeper.log (macOS).
+        # Unlike a deployment's, this Lakekeeper checks no token and no
+        # grant (no OpenID provider, Lakekeeper's default allow-all): the
+        # specs send none, and make the namespaces their tables go in.
         env:
           LAKEKEEPER_VERSION: v0.11.0
           LAKEKEEPER__PG_DATABASE_URL_READ: postgres://postgres:postgres@localhost:5432/texera_lakekeeper
@@ -592,13 +595,14 @@ jobs:
           done
           healthcheck || { on_fail; exit 1; }
       - name: Initialize Lakekeeper warehouse
+        # A deployment's Dashboard service creates this warehouse when it
+        # starts; the specs run without one, so this step creates the same.
         # Pull defaults out of storage.conf so this step doesn't duplicate
         # values that already live in the runtime config. Each scalar in
         # storage.conf is followed by a `${?VAR}` env-override line whose
         # name is globally unique, so anchoring grep on that override line
         # selects the value unambiguously across nested scopes.
-        # The key-prefix below is a literal instead: no runtime code reads it,
-        # so it is not in storage.conf. It must stay non-empty (#7739).
+        # The key-prefix must stay non-empty (#7739).
         run: |
           CONF=common/config/src/main/resources/storage.conf
           extract() {
@@ -606,6 +610,8 @@ jobs:
           }
           WAREHOUSE_NAME=$(extract STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME)
           S3_BUCKET=$(extract STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET)
+          KEY_PREFIX=$(extract STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX)
+          : "${KEY_PREFIX:?has no default in $CONF}"
           S3_ENDPOINT=$(extract STORAGE_S3_ENDPOINT)
           S3_REGION=$(extract STORAGE_S3_REGION)
           S3_USERNAME=$(extract STORAGE_S3_AUTH_USERNAME)
@@ -636,7 +642,7 @@ jobs:
             "storage-profile": {
               "type": "s3",
               "bucket": "$S3_BUCKET",
-              "key-prefix": "shared",
+              "key-prefix": "$KEY_PREFIX",
               "region": "$S3_REGION",
               "endpoint": "$S3_ENDPOINT",
               "flavor": "s3-compat",

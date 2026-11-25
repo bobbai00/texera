@@ -31,11 +31,14 @@ from pyiceberg.schema import Schema as IcebergSchema
 from core.models import Schema, Tuple
 from core.models.state import State
 from core.storage.document_factory import DocumentFactory
+from core.storage.execution_namespace import execution_namespace
 from core.storage.iceberg import iceberg_document
+from core.storage.iceberg.iceberg_catalog_instance import IcebergCatalogInstance
 from core.storage.iceberg.iceberg_document import IcebergDocument
 from core.storage.iceberg.iceberg_utils import (
     amber_tuples_to_arrow_table,
     arrow_table_to_amber_tuples,
+    create_namespace,
 )
 from core.storage.storage_config import StorageConfig
 from core.storage.vfs_uri_factory import VFSURIFactory
@@ -60,8 +63,6 @@ StorageConfig.initialize(
     postgres_password="password",
     rest_catalog_uri="http://localhost:8181/catalog/",
     rest_catalog_warehouse_name="texera",
-    table_result_namespace="operator-port-result",
-    table_state_namespace="operator-port-state",
     directory_path=tempfile.mkdtemp(prefix="texera-iceberg-warehouse-"),
     commit_batch_size=4096,
     s3_endpoint="http://localhost:9000",
@@ -73,6 +74,15 @@ StorageConfig.initialize(
 
 
 class TestIcebergDocument:
+    @pytest.fixture(scope="class", autouse=True)
+    def namespace_of_the_execution(self):
+        """
+        The documents below belong to execution 0. The Dashboard Service makes an
+        execution's namespace before the execution starts, and the engine never
+        does, so it is made here.
+        """
+        create_namespace(IcebergCatalogInstance.get_instance(), execution_namespace(0))
+
     @pytest.fixture
     def amber_schema(self):
         """Sample Amber schema"""
@@ -494,7 +504,9 @@ class TestIcebergDocumentWithMockCatalog:
 
         document.clear()
 
-        document.catalog.drop_table.assert_called_once_with("ns.tbl")
+        # Purged with it: the files of a table no catalog names are never deleted.
+        document.catalog.purge_table.assert_called_once_with("ns.tbl")
+        document.catalog.drop_table.assert_not_called()
 
     def test_clear_leaves_an_absent_table_alone(self, document):
         document.catalog.table_exists.return_value = False
@@ -502,6 +514,7 @@ class TestIcebergDocumentWithMockCatalog:
         document.clear()
 
         document.catalog.table_exists.assert_called_once_with("ns.tbl")
+        document.catalog.purge_table.assert_not_called()
         document.catalog.drop_table.assert_not_called()
 
     def test_get_count_is_zero_when_the_table_does_not_exist(self, document):
@@ -613,4 +626,4 @@ class TestIcebergDocumentWithMockCatalog:
 
         document.lock.gen_wlock.assert_called_once_with()
         document.lock.gen_rlock.assert_not_called()
-        document.catalog.drop_table.assert_called_once_with("ns.tbl")
+        document.catalog.purge_table.assert_called_once_with("ns.tbl")

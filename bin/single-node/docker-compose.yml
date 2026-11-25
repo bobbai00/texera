@@ -52,9 +52,9 @@ services:
       timeout: 3s
       retries: 10
 
-  # This job creates the S3 bucket used by the Iceberg warehouse that the
-  # Lakekeeper service manages. `rc` is RustFS's S3 client, the counterpart of
-  # the `mc` client this used to run.
+  # This job creates the S3 bucket the lake's Iceberg warehouses keep their files in; the
+  # DashboardService creates the shared warehouse in Lakekeeper. `rc` is RustFS's S3 client, the
+  # counterpart of the `mc` client this used to run.
   rustfs-init:
     image: rustfs/rc:v0.1.35
     container_name: texera-rustfs-init
@@ -72,6 +72,17 @@ services:
           --region "$$STORAGE_S3_REGION" --bucket-lookup path
         rc bucket create --ignore-existing "local/$$STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET"
         echo "RustFS bucket '$$STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET' is ready."
+        # A computing unit's own user, which reaches only the large-binaries bucket: a unit
+        # reads and writes the lake's tables only through the catalog. Each command leaves
+        # what is there as it is, so this job may run again on a kept volume.
+        BINARIES="$${STORAGE_S3_LARGE_BINARIES_BUCKET:-texera-large-binaries}"
+        rc bucket create --ignore-existing "local/$$BINARIES"
+        printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}' \
+          "$$BINARIES" "$$BINARIES" > /tmp/unit-policy.json
+        rc admin policy create local texera-unit-large-binaries /tmp/unit-policy.json
+        rc admin user add local "$$STORAGE_S3_UNIT_AUTH_USERNAME" "$$STORAGE_S3_UNIT_AUTH_PASSWORD"
+        rc admin policy attach local texera-unit-large-binaries --user "$$STORAGE_S3_UNIT_AUTH_USERNAME"
+        echo "RustFS user '$$STORAGE_S3_UNIT_AUTH_USERNAME' reaches only bucket '$$BINARIES'."
 
   # PostgreSQL with PGroonga extension for full-text search.
   # Used by lakeFS and Texera's metadata storage.
@@ -90,6 +101,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
       # mount the sql files for initializing the postgres
       - ../../sql:/docker-entrypoint-initdb.d
+    # Also on OpenFGA's network, which keeps its data here.
+    networks:
+      - default
+      - authz
 
   # lakeFS is the underlying storage of Texera's dataset service
   lakefs:
@@ -120,21 +135,66 @@ services:
       timeout: 5s
       retries: 10
 
-  # This job applies Lakekeeper's database schema to the Postgres instance —
-  # creating or upgrading the tables that Lakekeeper uses to track its catalog metadata.
-  lakekeeper-migrate:
-    image: vakamo/lakekeeper:v0.11.0
-    container_name: texera-lakekeeper-migrate
+  # This job applies OpenFGA's database schema to the Postgres instance, creating or upgrading
+  # the tables OpenFGA keeps its data in.
+  openfga-migrate:
+    image: openfga/openfga:v1.11.2
+    container_name: texera-openfga-migrate
     depends_on:
       postgres:
         condition: service_healthy
     env_file:
       - .env
     restart: "no"
+    command: ["migrate"]
+    networks:
+      - authz
+
+  # OpenFGA keeps what each caller of the lake's catalog may do: Lakekeeper records there who
+  # may use each namespace and who made each table, and asks it about every request. Only
+  # Lakekeeper calls it, so it is on OpenFGA's network alone: neither a computing unit nor
+  # JupyterLab, where users run their own code, reaches it.
+  openfga:
+    image: openfga/openfga:v1.11.2
+    container_name: texera-openfga
+    restart: unless-stopped
+    depends_on:
+      openfga-migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    command: ["run"]
+    networks:
+      - authz
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/grpc_health_probe", "-addr=localhost:8081"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # This job applies Lakekeeper's database schema to the Postgres instance —
+  # creating or upgrading the tables that Lakekeeper uses to track its catalog metadata —
+  # and writes the authorization model Lakekeeper keeps in OpenFGA.
+  lakekeeper-migrate:
+    image: vakamo/lakekeeper:v0.11.0
+    container_name: texera-lakekeeper-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openfga:
+        condition: service_healthy
+    env_file:
+      - .env
+    restart: "no"
     entrypoint: ["/home/nonroot/lakekeeper"]
     command: ["migrate"]
+    networks:
+      - default
+      - authz
 
-  # Lakekeeper is the Iceberg REST catalog service
+  # Lakekeeper is the Iceberg REST catalog service. It refuses a request without a token the
+  # services signed: when it starts, it reads the key to check them with at the
+  # AccessControlService, and it stops when it cannot.
   lakekeeper:
     image: vakamo/lakekeeper:v0.11.0
     container_name: texera-lakekeeper
@@ -146,186 +206,26 @@ services:
         condition: service_started
       lakekeeper-migrate:
         condition: service_completed_successfully
+      openfga:
+        condition: service_healthy
+      access-control-service:
+        condition: service_healthy
     env_file:
       - .env
     entrypoint: ["/home/nonroot/lakekeeper"]
     command: ["serve"]
     # Also on the computing unit's network: the lake's catalog is the one service a unit calls.
+    # And on OpenFGA's, as its one caller.
     networks:
       - default
       - unit
+      - authz
     healthcheck:
       test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 10s
-
-  # One-shot init container that creates the Lakekeeper default project and
-  # the Iceberg warehouse pointing at the RustFS bucket prepared by rustfs-init.
-  lakekeeper-init:
-    image: alpine:3.19
-    container_name: texera-lakekeeper-init
-    depends_on:
-      lakekeeper:
-        condition: service_healthy
-      rustfs-init:
-        condition: service_completed_successfully
-    env_file:
-      - .env
-    restart: "no"
-    entrypoint: [ "/bin/sh", "-c" ]
-    command:
-      - |
-        set -e
-
-        echo "Installing curl (to call Lakekeeper's management API) and jq (to parse its list responses)..."
-        apk add --no-cache curl jq
-
-        # Lakekeeper organizes warehouses under "projects" (its top-level tenant
-        # abstraction). Texera is single-tenant, so we use the NIL UUID (all
-        # zeros) as the project ID — with LAKEKEEPER__ENABLE_DEFAULT_PROJECT=true
-        # (Lakekeeper's default), this is the project that any client request
-        # without a project-id is routed to.
-        echo "Step 1: Ensuring Lakekeeper's default project exists (top-level tenant that will hold the Iceberg warehouse)..."
-
-        echo "Checking whether Lakekeeper's default project already exists..."
-        PROJECT_GET_CODE=$$(curl -s -o /tmp/project.txt -w "%{http_code}" \
-            "$$LAKEKEEPER_BASE_URI/management/v1/project" || echo "000")
-
-        if [ "$$PROJECT_GET_CODE" = "200" ]; then
-          echo "Lakekeeper's default project already exists. Skipping creation."
-        elif [ "$$PROJECT_GET_CODE" = "404" ]; then
-          echo "Default project not found. Creating..."
-          PROJECT_PAYLOAD='{"project-id": "00000000-0000-0000-0000-000000000000", "project-name": "default"}'
-
-          PROJECT_CODE=$$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-              -X POST \
-              -H "Content-Type: application/json" \
-              -d "$$PROJECT_PAYLOAD" \
-              "$$LAKEKEEPER_BASE_URI/management/v1/project" || echo "000")
-
-          if [ "$$PROJECT_CODE" -lt 200 ] || [ "$$PROJECT_CODE" -ge 300 ]; then
-            echo "Failed to create Lakekeeper's default project. HTTP Code: $$PROJECT_CODE"
-            echo "ERROR RESPONSE:"
-            if [ -f /tmp/response.txt ]; then cat /tmp/response.txt; fi
-            echo ""
-            exit 1
-          fi
-          echo "Created Lakekeeper's default project successfully (HTTP $$PROJECT_CODE)."
-        else
-          echo "Failed to check Lakekeeper's default project. HTTP Code: $$PROJECT_GET_CODE"
-          echo "ERROR RESPONSE:"
-          if [ -f /tmp/project.txt ]; then cat /tmp/project.txt; fi
-          echo ""
-          exit 1
-        fi
-
-
-        echo "Step 2: Ensuring Warehouse '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME' exists..."
-
-        # Detect existing warehouse first so we only POST when it's actually
-        # missing — keeps this init idempotent across re-runs. 
-        echo "Checking whether Lakekeeper Warehouse '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME' already exists..."
-        WAREHOUSE_LIST_CODE=$$(curl -s -o /tmp/warehouses.txt -w "%{http_code}" \
-            "$$LAKEKEEPER_BASE_URI/management/v1/warehouse" || echo "000")
-
-        if [ "$$WAREHOUSE_LIST_CODE" -lt 200 ] || [ "$$WAREHOUSE_LIST_CODE" -ge 300 ]; then
-          echo "Failed to list Lakekeeper warehouses. HTTP Code: $$WAREHOUSE_LIST_CODE"
-          echo "ERROR RESPONSE:"
-          if [ -f /tmp/warehouses.txt ]; then cat /tmp/warehouses.txt; fi
-          echo ""
-          exit 1
-        fi
-
-        if jq -e --arg name "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME" '.warehouses[]? | select(.name == $$name)' /tmp/warehouses.txt >/dev/null; then
-          # The warehouse persists its S3 endpoint in Lakekeeper's own DB. The
-          # local-dev launcher sets STORAGE_S3_ENDPOINT to the host LAN IP so
-          # both this container and the host JVMs (Iceberg remote-signing) reach
-          # the same RustFS — but that IP changes across networks / DHCP leases.
-          # This init is idempotent and would otherwise just skip, leaving a
-          # stale endpoint that breaks workflow execution with an opaque Iceberg
-          # RESTException. Refresh the stored endpoint on every run (#6195).
-          echo "Lakekeeper Warehouse '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME' already exists. Refreshing its storage endpoint to '$$STORAGE_S3_ENDPOINT'..."
-          WAREHOUSE_ID=$$(jq -r --arg name "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME" '.warehouses[]? | select(.name == $$name) | .id' /tmp/warehouses.txt)
-
-          # The key prefix and the region are both immutable: Lakekeeper rejects
-          # the whole payload when either would change, taking the endpoint with
-          # it. Reuse the profile the warehouse already holds and override only
-          # the endpoint, so no other field can drift out of the stored record.
-          REFRESHED_PROFILE=$$(jq -c --arg name "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME" --arg endpoint "$$STORAGE_S3_ENDPOINT" '.warehouses[]? | select(.name == $$name) | ."storage-profile" | .endpoint = $$endpoint' /tmp/warehouses.txt)
-
-          UPDATE_PAYLOAD=$$(cat <<EOF
-        {
-          "storage-profile": $$REFRESHED_PROFILE,
-          "storage-credential": {
-            "type": "s3",
-            "credential-type": "access-key",
-            "aws-access-key-id": "$$STORAGE_S3_AUTH_USERNAME",
-            "aws-secret-access-key": "$$STORAGE_S3_AUTH_PASSWORD"
-          }
-        }
-        EOF
-          )
-
-          UPDATE_CODE=$$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-              -X POST \
-              -H "Content-Type: application/json" \
-              -d "$$UPDATE_PAYLOAD" \
-              "$$LAKEKEEPER_BASE_URI/management/v1/warehouse/$$WAREHOUSE_ID/storage" || echo "000")
-
-          if [ "$$UPDATE_CODE" -lt 200 ] || [ "$$UPDATE_CODE" -ge 300 ]; then
-            echo "Failed to refresh Lakekeeper Warehouse storage. HTTP Code: $$UPDATE_CODE"
-            echo "ERROR RESPONSE:"
-            if [ -f /tmp/response.txt ]; then cat /tmp/response.txt; fi
-            echo ""
-            exit 1
-          fi
-          echo "Refreshed Lakekeeper Warehouse storage endpoint successfully (HTTP $$UPDATE_CODE)."
-        else
-          echo "Warehouse not found. Creating '$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME'..."
-          CREATE_PAYLOAD=$$(cat <<EOF
-        {
-          "warehouse-name": "$$STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME",
-          "project-id": "00000000-0000-0000-0000-000000000000",
-          "storage-profile": {
-            "type": "s3",
-            "bucket": "$$STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET",
-            "key-prefix": "$$STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX",
-            "region": "$$STORAGE_S3_REGION",
-            "endpoint": "$$STORAGE_S3_ENDPOINT",
-            "flavor": "s3-compat",
-            "path-style-access": true,
-            "sts-enabled": false
-          },
-          "storage-credential": {
-            "type": "s3",
-            "credential-type": "access-key",
-            "aws-access-key-id": "$$STORAGE_S3_AUTH_USERNAME",
-            "aws-secret-access-key": "$$STORAGE_S3_AUTH_PASSWORD"
-          }
-        }
-        EOF
-          )
-
-          WAREHOUSE_CODE=$$(curl -s -o /tmp/response.txt -w "%{http_code}" \
-              -X POST \
-              -H "Content-Type: application/json" \
-              -d "$$CREATE_PAYLOAD" \
-              "$$LAKEKEEPER_BASE_URI/management/v1/warehouse" || echo "000")
-
-          if [ "$$WAREHOUSE_CODE" -lt 200 ] || [ "$$WAREHOUSE_CODE" -ge 300 ]; then
-            echo "Failed to create Lakekeeper Warehouse. HTTP Code: $$WAREHOUSE_CODE"
-            echo "ERROR RESPONSE:"
-            if [ -f /tmp/response.txt ]; then cat /tmp/response.txt; fi
-            echo ""
-            exit 1
-          fi
-          echo "Created Lakekeeper Warehouse successfully (HTTP $$WAREHOUSE_CODE)."
-        fi
-
-        echo "Initialization sequence completed successfully!"
-
 
   # Part2: Specification of Texera's micro-services
   # FileService provides endpoints for Texera's dataset management
@@ -423,8 +323,6 @@ services:
     depends_on:
       lakekeeper:
         condition: service_healthy
-      lakekeeper-init:
-        condition: service_completed_successfully
     # No env_file here on purpose. A computing unit runs users' code, so it is given only what a
     # unit needs, not the whole .env (which holds the database, LakeFS and LiteLLM credentials,
     # and the key the services sign tokens with when AUTH_JWT_SECRET is set): the list the unit
@@ -433,17 +331,20 @@ services:
     # sets it.
     environment:
       - TEXERA_SERVICE_LOG_LEVEL
-      # The lake's catalog, where a unit keeps everything a run produces and records. A unit
+      # The lake's catalog, where a unit keeps everything a run produces and records. No
+      # credential for it is set here: the plan of each execution comes with the token that
+      # execution's requests carry, which reaches only the execution's own namespace. A unit
       # has no route to Postgres: STORAGE_ICEBERG_CATALOG_TYPE=postgres needs its three
       # STORAGE_ICEBERG_CATALOG_POSTGRES_* variables added here and postgres on the unit network.
       - STORAGE_ICEBERG_CATALOG_TYPE
       - STORAGE_ICEBERG_CATALOG_REST_URI
       - STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME
-      # The object store.
+      # The object store, with the unit's own user, which reaches only the large-binaries
+      # bucket (rustfs-init makes it).
       - STORAGE_S3_ENDPOINT
       - STORAGE_S3_REGION
-      - STORAGE_S3_AUTH_USERNAME
-      - STORAGE_S3_AUTH_PASSWORD
+      - STORAGE_S3_AUTH_USERNAME=${STORAGE_S3_UNIT_AUTH_USERNAME}
+      - STORAGE_S3_AUTH_PASSWORD=${STORAGE_S3_UNIT_AUTH_PASSWORD}
       - FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT
       # Overrides, each with a default in the unit's own configuration.
       - MAX_WORKFLOW_WEBSOCKET_REQUEST_PAYLOAD_SIZE_KB
@@ -480,10 +381,12 @@ services:
         condition: service_healthy
       # Creating an execution asks the compiling service for its plan (above). Each execution's
       # log, records and results are read from the lake, in a warehouse of Lakekeeper's, and
-      # dropped there when they expire.
+      # dropped there when they expire. It also sets the lake up: when it starts it creates the
+      # shared warehouse, in the bucket rustfs-init creates, and for each execution it creates
+      # the namespace the execution's tables go in and the token that may use it.
       lakekeeper:
         condition: service_healthy
-      lakekeeper-init:
+      rustfs-init:
         condition: service_completed_successfully
       lakefs:
         condition: service_healthy
@@ -605,8 +508,6 @@ services:
         condition: service_healthy
       lakekeeper:
         condition: service_healthy
-      lakekeeper-init:
-        condition: service_completed_successfully
     env_file:
       - .env
     healthcheck:
@@ -939,6 +840,10 @@ networks:
   # The computing unit's: see workflow-runtime-coordinator-service.
   unit:
     name: texera-single-node-unit
+  # OpenFGA's, which only Lakekeeper calls: OpenFGA asks for no credential, and whoever reaches it
+  # can write any grant, so it is on no other network. Postgres is on it for OpenFGA's data.
+  authz:
+    name: texera-single-node-authz
 
 # persistent volumes
 volumes:

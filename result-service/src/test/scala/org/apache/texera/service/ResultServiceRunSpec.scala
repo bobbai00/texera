@@ -26,6 +26,7 @@ import io.dropwizard.jersey.DropwizardResourceConfig
 import io.dropwizard.jersey.setup.JerseyEnvironment
 import io.dropwizard.jetty.MutableServletContextHandler
 import io.dropwizard.jetty.setup.ServletEnvironment
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.auth.{RoleAnnotationEnforcer, UnauthorizedExceptionMapper}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.service.resource.{HealthCheckResource, ResultResource}
@@ -41,31 +42,38 @@ import scala.util.Try
 
 class ResultServiceRunSpec extends AnyFlatSpec with Matchers {
 
+  /** What one `run` wired: the mocked Dropwizard environment, and the catalog identity it chose. */
   private case class Wiring(
       jersey: JerseyEnvironment,
       servlets: ServletEnvironment,
-      context: MutableServletContextHandler
+      context: MutableServletContextHandler,
+      catalogIdentity: CatalogIdentity.Mode
   )
 
-  /** One `run` against mocked Dropwizard wiring. */
+  /**
+    * One `run` against mocked Dropwizard wiring. The catalog identity this suite found is put
+    * back after it: the module's suites share one JVM, whose catalog clients are cached by
+    * identity.
+    */
   private def run(): Wiring = {
-    val wiring = Wiring(
-      mock(classOf[JerseyEnvironment]),
-      mock(classOf[ServletEnvironment]),
-      mock(classOf[MutableServletContextHandler])
-    )
+    val jersey = mock(classOf[JerseyEnvironment])
+    val servlets = mock(classOf[ServletEnvironment])
+    val context = mock(classOf[MutableServletContextHandler])
     val env = mock(classOf[Environment])
-    when(env.jersey).thenReturn(wiring.jersey)
-    when(env.servlets).thenReturn(wiring.servlets)
-    when(env.getApplicationContext).thenReturn(wiring.context)
-    when(wiring.jersey.getResourceConfig).thenReturn(DropwizardResourceConfig.forTesting())
+    when(env.jersey).thenReturn(jersey)
+    when(env.servlets).thenReturn(servlets)
+    when(env.getApplicationContext).thenReturn(context)
+    when(jersey.getResourceConfig).thenReturn(DropwizardResourceConfig.forTesting())
 
-    new ResultService().run(mock(classOf[ResultServiceConfiguration]), env)
-    wiring
+    val identity = CatalogIdentity.mode
+    try {
+      new ResultService().run(mock(classOf[ResultServiceConfiguration]), env)
+      Wiring(jersey, servlets, context, CatalogIdentity.mode)
+    } finally CatalogIdentity.use(identity)
   }
 
   "ResultService.run" should "install the API prefix, session handling and its resources" in {
-    val Wiring(jersey, servlets, _) = run()
+    val Wiring(jersey, servlets, _, _) = run()
 
     // Everything the service serves lives under /api; losing this silently moves every
     // endpoint to the root.
@@ -85,8 +93,13 @@ class ResultServiceRunSpec extends AnyFlatSpec with Matchers {
     Some(SqlServer.getInstance()) should not be before
   }
 
+  it should "reach the catalog as the platform" in {
+    // It reads the results of every execution, which no execution's own token may.
+    run().catalogIdentity shouldBe CatalogIdentity.Platform
+  }
+
   it should "install the auth stack and the request logging filter" in {
-    val Wiring(jersey, _, context) = run()
+    val Wiring(jersey, _, context, _) = run()
 
     // AuthFeatures.register: without these, @Auth parameters do not resolve and
     // @RolesAllowed on the result endpoints is ignored.

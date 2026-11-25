@@ -45,6 +45,8 @@ class IcebergRestCatalogIntegrationSpec extends AnyFlatSpec with BeforeAndAfterA
       "rest_integration_test",
       StorageConfig.icebergRESTCatalogWarehouseName
     )
+    // A table is made only in a namespace that is there.
+    IcebergUtil.createNamespace(restCatalog, testNamespace)
   }
 
   override def afterAll(): Unit = {

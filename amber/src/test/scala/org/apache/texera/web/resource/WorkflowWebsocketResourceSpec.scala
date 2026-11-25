@@ -30,7 +30,7 @@ import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.testkit.TestKit
 import org.apache.texera.amber.clustering.ClusterListener
 import org.apache.texera.amber.core.executor.OpExecWithClassName
-import org.apache.texera.amber.core.storage.{DocumentFactory, ExecutionLogStore, VFSURIFactory}
+import org.apache.texera.amber.core.storage.ExecutionLogStore
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -108,11 +108,13 @@ import org.apache.texera.web.service.execution.{
   ComputingUnitClient,
   CostHintsLoader,
   CreatedExecution,
+  ExecutionCatalogAccess,
   ExecutionCreator,
   ExecutionExpiry,
   ExecutionStart,
   FixtureCompilingService,
   OperatorUpdates,
+  RecordingCatalogAccess,
   RecordingComputingUnits
 }
 import org.apache.texera.web.service.{
@@ -1068,9 +1070,12 @@ class WorkflowWebsocketResourceSpec
   // A format this unit does not read yet: the one after its own.
   private val nextFormat = PhysicalPlanCodec.FormatVersion + 1
 
-  /** Every runtime-statistics and log table these cases make, dropped after the suite. */
-  private val madeStatistics = ArrayBuffer.empty[URI]
-  private val madeLogs = ArrayBuffer.empty[URI]
+  /**
+    * The Dashboard's catalog access for the creates of these cases: it makes each execution's
+    * namespace, which the suite drops after it with every table these cases made, and keeps the
+    * execution's catalog user, its grants and its token, as on a REST catalog.
+    */
+  private val catalogAccess = new RecordingCatalogAccess()
 
   private var recorder: StatementRecorder = _
 
@@ -1130,8 +1135,7 @@ class WorkflowWebsocketResourceSpec
 
   override protected def afterAll(): Unit =
     try {
-      madeLogs.foreach(uri => Try(ExecutionLogStore.drop(uri)))
-      madeStatistics.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
+      catalogAccess.opened.keys.foreach(eid => Try(TestUtils.dropExecutionNamespace(eid)))
       TestKit.shutdownActorSystem(system)
     } finally {
       closeConnectionPool()
@@ -1153,7 +1157,12 @@ class WorkflowWebsocketResourceSpec
         costHints = NoHints,
         background = _.run(),
         // No large binary is deleted for what a create finds replaced.
-        expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
+        expiry = new ExecutionExpiry(
+          warehousesEnabled = false,
+          deleteBinaries = _ => (),
+          access = catalogAccess
+        ),
+        access = catalogAccess
       )
 
   /** The Dashboard's making of a change to a paused operator, for the units `units`. */
@@ -1211,10 +1220,6 @@ class WorkflowWebsocketResourceSpec
         new URI("http://texera.example/api/executions"),
         FixtureCompilingService.authorizationOf(creatorUid)
       )
-    madeStatistics += VFSURIFactory.createRuntimeStatisticsURI(
-      WorkflowIdentity(wid),
-      ExecutionIdentity(response.eid)
-    )
     unit.created(response)
   }
 
@@ -1310,9 +1315,19 @@ class WorkflowWebsocketResourceSpec
         case other => fail(s"the unit answered $other")
       }
 
-    override def start(cuid: Int, plan: String, uid: Int): Handover = {
-      super.start(cuid, plan, uid)
-      outcomeOf(routes.start(StartExecutionRequest(plan, cuid), CallerHeaders.of(uid)))
+    override def start(
+        cuid: Int,
+        plan: String,
+        uid: Int,
+        catalogToken: Option[String]
+    ): Handover = {
+      super.start(cuid, plan, uid, catalogToken)
+      outcomeOf(
+        routes.start(
+          StartExecutionRequest(plan, cuid, catalogToken.orNull),
+          CallerHeaders.of(uid)
+        )
+      )
     }
 
     override def update(cuid: Int, update: String, uid: Int): Handover = {
@@ -1404,8 +1419,10 @@ class WorkflowWebsocketResourceSpec
         awaitEngineUp(otherSent)
       }
 
-      // Handed over once, to the unit the execution was created for, for its creator.
-      unit.starts.map(handed => (handed.cuid, handed.uid)) shouldBe Seq((storedCuid, creatorUid))
+      // Handed over once, to the unit the execution was created for, for its creator, with the
+      // token its catalog requests carry.
+      unit.starts.map(handed => (handed.cuid, handed.uid, handed.catalogToken)) shouldBe
+        Seq((storedCuid, creatorUid, catalogAccess.opened.get(execution.eid)))
       // The run is set up in full on the plan read, and READY: every session is told so.
       val run = service.executionService.getValue
       run.workflowContext.executionId shouldBe ExecutionIdentity(execution.eid)
@@ -1446,9 +1463,10 @@ class WorkflowWebsocketResourceSpec
       sent.clear()
       otherSent.clear()
 
-      // The same plan again, as a hand-over that is retried would send it.
+      // The same plan again, with its token, as a hand-over that is retried would send it.
+      val token = unit.starts.head.catalogToken
       recorder.record {
-        unit.start(storedCuid, execution.plan, creatorUid) shouldBe
+        unit.start(storedCuid, execution.plan, creatorUid, token) shouldBe
           Refused(s"Execution ${execution.eid} was already started.")
       } shouldBe empty
 
@@ -1470,7 +1488,12 @@ class WorkflowWebsocketResourceSpec
       // A unit that is handed the plan in a format it does not read yet: it refuses it.
       var handedFor: Option[Long] = None
       val unit = new UnitOn(service) {
-        override def start(cuid: Int, plan: String, uid: Int): Handover = {
+        override def start(
+            cuid: Int,
+            plan: String,
+            uid: Int,
+            catalogToken: Option[String]
+        ): Handover = {
           handedFor = ExecutionStart.executionNamedBy(plan)
           super.start(
             cuid,
@@ -1478,7 +1501,8 @@ class WorkflowWebsocketResourceSpec
               s""""formatVersion": ${PhysicalPlanCodec.FormatVersion},""",
               s""""formatVersion": $nextFormat,"""
             ),
-            uid
+            uid,
+            catalogToken
           )
         }
       }
@@ -1499,6 +1523,8 @@ class WorkflowWebsocketResourceSpec
       row.getOutcome.shortValue() shouldBe WorkflowExecutionStatus.Failed
       row.getOutcomeReason shouldBe s"its computing unit did not start it: $why"
       row.getEndedAt should not be null
+      // What it was let do in the lake is gone with it.
+      catalogAccess.management.revokedSinceMade(ExecutionCatalogAccess.userOf(eid)) shouldBe true
       // Nothing of it reached the unit's sessions, and the run in flight is as it was.
       sent shouldBe empty
       service.executionService.getValue should be theSameInstanceAs inFlight
@@ -1520,7 +1546,6 @@ class WorkflowWebsocketResourceSpec
         ExecutionIdentity(execution.eid),
         None
       )
-      madeLogs += logUri
       awaitEngineUp(sent)
       awaitEngineUp(otherSent)
       val run = service.executionService.getValue

@@ -37,7 +37,6 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import org.apache.texera.amber.util.IcebergUtil
-import org.apache.texera.common.config.StorageConfig
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -71,6 +70,13 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     // default (`rest`) config -- otherwise the case would pass or fail according to
     // the machine's catalog type rather than the code under test.
     LocalHadoopIcebergCatalog.ensure("wh-test")
+    // The namespaces of the executions whose tables the specs make, as the Dashboard service
+    // makes them before an execution starts: the engine makes none.
+    for (warehouse <- Seq(None, Some("wh-test")); eid <- Seq(0L, 345L, 346L, 348L, 349L, 350L))
+      IcebergUtil.createNamespace(
+        IcebergCatalogInstance.getInstance(warehouse),
+        ExecutionNamespace.of(eid)
+      )
   }
 
   // ---------------------------------------------------------------------------
@@ -254,7 +260,7 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
       Some("it")
   }
 
-  it should "create a state document for a vfs state URI (STATE namespace arm)" in {
+  it should "create a state document for a vfs state URI" in {
     val base = VFSURIFactory.createPortBaseURI(
       WorkflowIdentity(0),
       ExecutionIdentity(0),
@@ -300,8 +306,8 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     DocumentFactory.documentExists(vfsUri) shouldBe true
   }
 
-  it should "resolve the CONSOLE_MESSAGES namespace" in {
-    // An execution no suite runs, so nothing made its console table.
+  it should "report false for the console of an execution whose namespace was never made" in {
+    // An execution no suite runs, so nothing made its namespace or its console table.
     val consoleUri = VFSURIFactory.createConsoleMessagesURI(
       WorkflowIdentity(0),
       ExecutionIdentity(UUID.randomUUID().getMostSignificantBits & Long.MaxValue)
@@ -309,7 +315,7 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
     DocumentFactory.documentExists(consoleUri) shouldBe false
   }
 
-  it should "resolve the RUNTIME_STATISTICS namespace" in {
+  it should "report false for statistics no run of the execution made" in {
     val statsUri = VFSURIFactory.createRuntimeStatisticsURI(
       WorkflowIdentity(0),
       ExecutionIdentity(0)
@@ -339,11 +345,9 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
   // an execution's own tables
   // ---------------------------------------------------------------------------
 
-  "createDocument" should "keep an execution's log in the log namespace, in a table named after its workflow and execution, with or without a warehouse" in {
-    val logTable = TableIdentifier.of(
-      StorageConfig.icebergTableExecutionLogNamespace,
-      "wid_12_eid_345_executionlog"
-    )
+  "createDocument" should
+    "keep an execution's log in its namespace, named after it, in a warehouse or not" in {
+    val logTable = TableIdentifier.of("execution-345", "wid_12_eid_345_executionlog")
     Seq(None, Some("wh-test")).foreach { warehouse =>
       val logUri =
         VFSURIFactory.createExecutionLogURI(WorkflowIdentity(12), ExecutionIdentity(345), warehouse)
@@ -365,10 +369,33 @@ class DocumentFactorySpec extends AnyFlatSpec with Matchers with BeforeAndAfterA
 
     val table = DocumentFactory.icebergTableOf(logUri)
     table shouldBe defined
-    table.get.name() should endWith(
-      s"${StorageConfig.icebergTableExecutionLogNamespace}.wid_13_eid_346_executionlog"
-    )
+    table.get.name() should endWith("execution-346.wid_13_eid_346_executionlog")
     IcebergUtil.fromIcebergSchema(table.get.schema()) shouldBe ResultSchema.executionLogSchema
+  }
+
+  it should "find every table of an execution in its namespace, and another's in its own" in {
+    def tablesOf(eid: Long): Seq[URI] = {
+      val base = VFSURIFactory.createPortBaseURI(
+        WorkflowIdentity(16),
+        ExecutionIdentity(eid),
+        GlobalPortIdentity(PhysicalOpIdentity(OperatorIdentity("scan"), "main"), PortIdentity())
+      )
+      Seq(
+        VFSURIFactory.resultURI(base),
+        VFSURIFactory.stateURI(base),
+        VFSURIFactory.createConsoleMessagesURI(WorkflowIdentity(16), ExecutionIdentity(eid)),
+        VFSURIFactory.createRuntimeStatisticsURI(WorkflowIdentity(16), ExecutionIdentity(eid)),
+        VFSURIFactory.createExecutionLogURI(WorkflowIdentity(16), ExecutionIdentity(eid))
+      )
+    }
+    for (eid <- Seq(349L, 350L); uri <- tablesOf(eid)) {
+      DocumentFactory.createDocument(uri, vfsSchema)
+      withClue(s"$uri: ") {
+        DocumentFactory.icebergTableOf(uri).get.name() should endWith(
+          s"execution-$eid.${uri.getPath.stripPrefix("/").replace('/', '_')}"
+        )
+      }
+    }
   }
 
   it should "find nothing where there is no table" in {

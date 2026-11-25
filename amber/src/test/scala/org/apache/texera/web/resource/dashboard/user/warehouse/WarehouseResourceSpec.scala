@@ -45,7 +45,8 @@ import scala.collection.mutable
 
 /**
   * Spec for [[WarehouseResource]] (#6932): the disabled-gate behavior, and the
-  * create/list/delete flow against MockTexeraDB with a stubbed [[LakekeeperClient]].
+  * create/list/delete flow against MockTexeraDB with a stubbed [[LakekeeperClient]] and a
+  * catalog setup that sets nothing up.
   *
   * The feature flag is a constructor dependency, so the two gate states are two resource
   * instances — no global state is touched, and suites cannot interfere with each other.
@@ -63,11 +64,16 @@ class WarehouseResourceSpec
 
   @volatile private var createFailure: Option[Exception] = None
   @volatile private var deleteFailure: Option[Exception] = None
+  @volatile private var setupFailure: Option[Exception] = None
+
+  // What the stub catalog was asked, in order: each setup, and each warehouse made.
+  private val asked = mutable.Buffer[String]()
 
   private val stubClient: LakekeeperClient = new LakekeeperClient() {
     override def createWarehouse(warehouseName: String): UUID = {
       createFailure.foreach(throw _)
       createdNames += warehouseName
+      asked += s"create $warehouseName"
       stubWarehouseId
     }
     override def deleteWarehouseEmptyFirst(lakekeeperWarehouseId: UUID): Unit = {
@@ -76,8 +82,15 @@ class WarehouseResourceSpec
     }
   }
 
-  private val resource = new WarehouseResource(stubClient, enabled = true)
-  private val disabledResource = new WarehouseResource(stubClient, enabled = false)
+  /** The catalog's setup, which sets nothing up: it notes that it was asked. */
+  private def stubSetup(): Unit = {
+    setupFailure.foreach(throw _)
+    asked += "setup"
+  }
+
+  private val resource = new WarehouseResource(stubClient, enabled = true, () => stubSetup())
+  private val disabledResource =
+    new WarehouseResource(stubClient, enabled = false, () => stubSetup())
   private var sessionUser: SessionUser = _
   private var otherUser: SessionUser = _
 
@@ -104,8 +117,10 @@ class WarehouseResourceSpec
   override protected def beforeEach(): Unit = {
     createFailure = None
     deleteFailure = None
+    setupFailure = None
     createdNames.clear()
     deletedIds.clear()
+    asked.clear()
     getDSLContext.deleteFrom(USER_WAREHOUSE).execute()
   }
 
@@ -180,6 +195,24 @@ class WarehouseResourceSpec
     val status = resource.status(sessionUser)
     status.enabled shouldBe true
     status.warehouses.map(_.whid) shouldBe List(created.whid)
+  }
+
+  it should "set the catalog up before it makes the warehouse in the catalog's default project" in {
+    val created = resource.create(CreateWarehouseRequest("after-setup"), sessionUser)
+
+    asked.toList shouldBe List("setup", s"create ${created.lakekeeperWarehouseName}")
+  }
+
+  it should "answer 502, and record nothing, when the catalog cannot be set up" in {
+    setupFailure = Some(new RuntimeException("Lakekeeper read the server's info failed (HTTP 503)"))
+
+    val refused = intercept[WebApplicationException] {
+      resource.create(CreateWarehouseRequest("not-set-up"), sessionUser)
+    }
+
+    refused.getResponse.getStatus shouldBe 502
+    createdNames shouldBe empty
+    resource.status(sessionUser).warehouses shouldBe empty
   }
 
   it should "mint a fresh catalog name when the same display name is reused" in {

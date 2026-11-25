@@ -19,16 +19,24 @@
 
 package org.apache.texera.web.service
 
+import com.fasterxml.jackson.databind.node.ObjectNode
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.typesafe.scalalogging.LazyLogging
-import kong.unirest.Unirest
+import kong.unirest.{GetRequest, HttpRequestWithBody, HttpResponse, Unirest}
+import org.apache.texera.auth.CatalogTokens
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.util.RetryUtil
-import org.apache.texera.web.service.LakekeeperClient.PurgeWaitPolicy
+import org.apache.texera.web.service.LakekeeperClient.{
+  AnswerTimeoutMs,
+  ConnectTimeoutMs,
+  PurgeWaitPolicy,
+  ServerInfo
+}
 
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import scala.collection.concurrent.TrieMap
 import scala.collection.mutable.ListBuffer
 import scala.jdk.CollectionConverters.IteratorHasAsScala
 
@@ -49,15 +57,35 @@ object LakekeeperClient {
       initialDelayMillis: Long = 200,
       maxDelayMillis: Long = 5000
   )
+
+  /** What Lakekeeper tells of itself: whether a first caller has bootstrapped it. */
+  final case class ServerInfo(bootstrapped: Boolean)
+
+  /**
+    * How long a call may take to connect and to answer. A create of an execution makes four of
+    * them inside a request the gateway gives 120 s, which compiling and handing the plan over
+    * nearly fill, so a catalog that does not answer fails the create rather than outlast it.
+    */
+  val ConnectTimeoutMs = 5000
+  val AnswerTimeoutMs = 10000
+
+  /** The Dashboard service's own, shared by its routes and its jobs. */
+  lazy val forDeployment: LakekeeperClient = new LakekeeperClient()
 }
 
 /**
-  * Client for the Lakekeeper APIs used to manage per-user warehouses (#6870).
+  * Client for the Lakekeeper APIs the Dashboard service uses: to set the catalog up
+  * ([[CatalogSetup]]), to manage per-user warehouses (#6870), and to let each execution use its
+  * own namespace and nothing else (`ExecutionCatalogAccess`).
   *
-  * Two API families are involved: the **management** API (`/management/v1/...`) creates and
-  * deletes warehouse entities, and the **catalog** API (`/catalog/v1/{lakekeeperWarehouseId}/...`) lists
-  * and drops the namespaces/tables inside one. The channel is unauthenticated today;
-  * catalog-side authentication is Phase 2 (#6040).
+  * Two API families are involved: the **management** API (`/management/v1/...`) bootstraps the
+  * server and manages projects, warehouses, users and their grants, and the **catalog** API
+  * (`/catalog/v1/{prefix}/...`) lists, finds and drops the namespaces and tables inside one
+  * warehouse, whose prefix is its id. Every call carries the platform's token
+  * ([[CatalogTokens.platform]]), which names the catalog's operator.
+  *
+  * A path segment this client sends is percent-encoded but for the characters RFC 3986 leaves
+  * unreserved, so a catalog user's id such as `oidc~texera-execution-42` goes as it is.
   *
   * @param catalogUri the Iceberg REST catalog uri (ends with `/catalog`), from which the
   *                   management base is derived. Overridable for tests.
@@ -77,12 +105,118 @@ class LakekeeperClient(
 
   private val mapper = new ObjectMapper()
 
-  private def urlEncode(segment: String): String =
-    URLEncoder.encode(segment, StandardCharsets.UTF_8)
+  // The catalog prefix of each warehouse looked up so far, by its name: the warehouse's id,
+  // which no warehouse of a name ever changes.
+  private val prefixes = TrieMap.empty[String, String]
+
+  private def segment(value: String): String =
+    URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20").replace("%7E", "~")
+
+  private def authorization: String = s"Bearer ${CatalogTokens.platform()}"
+
+  private def get(url: String): GetRequest =
+    Unirest
+      .get(url)
+      .header("Authorization", authorization)
+      .connectTimeout(ConnectTimeoutMs)
+      .socketTimeout(AnswerTimeoutMs)
+
+  private def delete(url: String): HttpRequestWithBody =
+    Unirest
+      .delete(url)
+      .header("Authorization", authorization)
+      .connectTimeout(ConnectTimeoutMs)
+      .socketTimeout(AnswerTimeoutMs)
+
+  private def post(url: String, payload: JsonNode): HttpResponse[String] =
+    Unirest
+      .post(url)
+      .header("Authorization", authorization)
+      .header("Content-Type", "application/json")
+      .connectTimeout(ConnectTimeoutMs)
+      .socketTimeout(AnswerTimeoutMs)
+      .body(payload.toString)
+      .asString()
 
   private def failOn(status: Int, body: String, action: String): Unit =
     if (status < 200 || status >= 300) {
       throw new RuntimeException(s"Lakekeeper $action failed (HTTP $status): $body")
+    }
+
+  /** The `error.type` of an error Lakekeeper answered; None for a body that is no such error. */
+  private def errorTypeOf(body: String): Option[String] =
+    try {
+      Option(mapper.readTree(body))
+        .map(_.path("error").path("type"))
+        .filter(_.isTextual)
+        .map(_.asText())
+    } catch {
+      case _: Exception => None
+    }
+
+  /** Whether the server has been bootstrapped: `GET /management/v1/info`. */
+  def info(): ServerInfo = {
+    val response = get(s"$managementBase/info").asString()
+    failOn(response.getStatus, response.getBody, "read the server's info")
+    val bootstrapped = mapper.readTree(response.getBody).path("bootstrapped")
+    if (!bootstrapped.isBoolean) {
+      throw new RuntimeException(s"Lakekeeper's info tells no bootstrap: ${response.getBody}")
+    }
+    ServerInfo(bootstrapped.asBoolean())
+  }
+
+  /**
+    * Bootstraps the server, which makes the caller, the platform, its operator: an application
+    * named Texera. A server another caller bootstrapped meanwhile is bootstrapped too.
+    */
+  def bootstrap(): Unit = {
+    val payload = mapper
+      .createObjectNode()
+      .put("accept-terms-of-use", true)
+      .put("is-operator", true)
+      .put("user-type", "application")
+      .put("user-name", "Texera")
+    val response = post(s"$managementBase/bootstrap", payload)
+    val bootstrappedBefore = response.getStatus == 400 &&
+      errorTypeOf(response.getBody).contains("CatalogAlreadyBootstrapped")
+    if (!bootstrappedBefore) failOn(response.getStatus, response.getBody, "bootstrap")
+  }
+
+  /**
+    * Makes Lakekeeper's default project, the one every warehouse is in, unless it is there: a
+    * project of its id that is there already (409) is the one.
+    */
+  def ensureDefaultProject(): Unit = {
+    val payload = mapper
+      .createObjectNode()
+      .put("project-id", DefaultProjectId)
+      .put("project-name", "default")
+    val response = post(s"$managementBase/project", payload)
+    if (response.getStatus != 409) {
+      failOn(response.getStatus, response.getBody, "create the default project")
+    }
+  }
+
+  /**
+    * Makes the warehouse named `name` that executions write into when they name none, with the
+    * key prefix `keyPrefix` in this deployment's bucket. One that is there keeps its profile but
+    * for its endpoint, which is set to this deployment's again (#6195): a local deployment
+    * reaches its object store at the host's address, which changes with the network.
+    */
+  def ensureSharedWarehouse(name: String, keyPrefix: String): Unit =
+    warehouseNamed(name) match {
+      case Some(stored) => refreshEndpoint(stored)
+      case None =>
+        val response = post(s"$managementBase/warehouse", warehousePayload(name, keyPrefix))
+        if (response.getStatus == 409) {
+          // Another replica made it meanwhile.
+          refreshEndpoint(warehouseNamed(name).getOrElse {
+            throw new RuntimeException(
+              s"Lakekeeper refused to create warehouse '$name' (HTTP 409), and has none of " +
+                s"that name: ${response.getBody}"
+            )
+          })
+        } else failOn(response.getStatus, response.getBody, s"create warehouse '$name'")
     }
 
   /**
@@ -93,35 +227,104 @@ class LakekeeperClient(
     * @return the Lakekeeper-assigned warehouse id.
     */
   def createWarehouse(warehouseName: String): UUID = {
-    val payload = mapper.createObjectNode()
-    payload.put("warehouse-name", warehouseName)
-    payload.put("project-id", DefaultProjectId)
-
-    val profile = payload.putObject("storage-profile")
-    profile.put("type", "s3")
-    profile.put("bucket", StorageConfig.icebergRESTCatalogS3Bucket)
-    profile.put("region", StorageConfig.s3Region)
-    profile.put("endpoint", StorageConfig.s3Endpoint)
-    profile.put("path-style-access", true)
     // The warehouse name doubles as the key prefix, so each warehouse owns a distinct
     // subtree of the shared bucket.
-    profile.put("key-prefix", warehouseName)
-    profile.put("flavor", "s3-compat")
-    profile.put("sts-enabled", false)
-
-    val credential = payload.putObject("storage-credential")
-    credential.put("type", "s3")
-    credential.put("credential-type", "access-key")
-    credential.put("aws-access-key-id", StorageConfig.s3Username)
-    credential.put("aws-secret-access-key", StorageConfig.s3Password)
-
-    val response = Unirest
-      .post(s"$managementBase/warehouse")
-      .header("Content-Type", "application/json")
-      .body(payload.toString)
-      .asString()
+    val response =
+      post(s"$managementBase/warehouse", warehousePayload(warehouseName, warehouseName))
     failOn(response.getStatus, response.getBody, s"create warehouse '$warehouseName'")
     UUID.fromString(mapper.readTree(response.getBody).get("warehouse-id").asText())
+  }
+
+  /**
+    * The id Lakekeeper gave namespace `namespace` of the warehouse named `warehouseName`, which
+    * grants name it by; None when there is no such namespace.
+    */
+  def namespaceIdOf(warehouseName: String, namespace: String): Option[String] = {
+    val response =
+      get(s"$catalogBase/${prefixOf(warehouseName)}/namespaces/${segment(namespace)}").asString()
+    if (response.getStatus == 404) None
+    else {
+      failOn(response.getStatus, response.getBody, s"look up namespace '$namespace'")
+      val id = mapper.readTree(response.getBody).path("properties").path("namespace_id")
+      if (!id.isTextual) {
+        throw new RuntimeException(
+          s"Lakekeeper answered namespace '$namespace' with no id: ${response.getBody}"
+        )
+      }
+      Some(id.asText())
+    }
+  }
+
+  /** Makes the catalog user `id`, an application named `name`, unless it is there. */
+  def createUser(id: String, name: String): Unit = {
+    val payload = mapper
+      .createObjectNode()
+      .put("id", id)
+      .put("name", name)
+      .put("user-type", "application")
+      .put("update-if-exists", true)
+    val response = post(s"$managementBase/user", payload)
+    failOn(response.getStatus, response.getBody, s"create user '$id'")
+  }
+
+  /**
+    * Grants catalog user `user` each of `kinds` (such as `select`) on the namespace whose id is
+    * `namespaceId`. A grant the user holds already is granted.
+    */
+  def grantNamespace(namespaceId: String, user: String, kinds: Seq[String]): Unit = {
+    val url = s"$managementBase/permissions/namespace/${segment(namespaceId)}/assignments"
+    val payload = mapper.createObjectNode()
+    val writes = payload.putArray("writes")
+    kinds.foreach(kind => writes.addObject().put("type", kind).put("user", user))
+    val response = post(url, payload)
+    if (!isSuccess(response.getStatus) && !holds(url, user, kinds)) {
+      failOn(response.getStatus, response.getBody, s"grant $user on namespace $namespaceId")
+    }
+  }
+
+  /** Whether the assignments at `url` give catalog user `user` every one of `kinds`. */
+  private def holds(url: String, user: String, kinds: Seq[String]): Boolean = {
+    val response = get(url).asString()
+    isSuccess(response.getStatus) && {
+      val held = mapper
+        .readTree(response.getBody)
+        .path("assignments")
+        .iterator()
+        .asScala
+        .filter(_.path("user").asText() == user)
+        .map(_.path("type").asText())
+        .toSet
+      kinds.forall(held.contains)
+    }
+  }
+
+  /**
+    * Deletes catalog user `id`, and with it every grant and ownership it holds: a token that
+    * names it can do nothing any more. A user that is not there is deleted.
+    */
+  def deleteUser(id: String): Unit = {
+    val response = delete(s"$managementBase/user/${segment(id)}").asString()
+    if (response.getStatus != 404) {
+      failOn(response.getStatus, response.getBody, s"delete user '$id'")
+    }
+  }
+
+  /**
+    * Drops namespace `namespace` of warehouse `warehouseName` with everything in it: its tables,
+    * each with its files, its views and the namespaces in it, protected or not. So nothing an
+    * execution's token may make in its namespace keeps the namespace from going. A namespace
+    * that is not there is dropped.
+    */
+  def dropNamespace(warehouseName: String, namespace: String): Unit = {
+    val response =
+      delete(s"$catalogBase/${prefixOf(warehouseName)}/namespaces/${segment(namespace)}")
+        .queryString("recursive", "true")
+        .queryString("purge", "true")
+        .queryString("force", "true")
+        .asString()
+    if (response.getStatus != 404) {
+      failOn(response.getStatus, response.getBody, s"drop namespace '$namespace'")
+    }
   }
 
   /**
@@ -136,19 +339,16 @@ class LakekeeperClient(
     // delete failing after the Lakekeeper delete succeeded) heals instead of wedging.
     listNamespaces(lakekeeperWarehouseId).foreach { namespace =>
       listTables(lakekeeperWarehouseId, namespace).foreach { table =>
-        val response = Unirest
-          .delete(
-            s"$catalogBase/$lakekeeperWarehouseId/namespaces/${urlEncode(namespace)}/tables/${urlEncode(table)}"
-          )
-          .queryString("purgeRequested", "true")
+        val response = delete(
+          s"$catalogBase/$lakekeeperWarehouseId/namespaces/${segment(namespace)}/tables/${segment(table)}"
+        ).queryString("purgeRequested", "true")
           .asString()
         if (response.getStatus != 404) {
           failOn(response.getStatus, response.getBody, s"drop table '$namespace.$table'")
         }
       }
-      val response = Unirest
-        .delete(s"$catalogBase/$lakekeeperWarehouseId/namespaces/${urlEncode(namespace)}")
-        .asString()
+      val response =
+        delete(s"$catalogBase/$lakekeeperWarehouseId/namespaces/${segment(namespace)}").asString()
       if (response.getStatus != 404) {
         failOn(response.getStatus, response.getBody, s"drop namespace '$namespace'")
       }
@@ -168,10 +368,10 @@ class LakekeeperClient(
       maxDelayMillis = purgeWait.maxDelayMillis,
       shouldRetry = _.isInstanceOf[UnfinishedTasksConflictException]
     ) {
-      val response = Unirest.delete(s"$managementBase/warehouse/$lakekeeperWarehouseId").asString()
+      val response = delete(s"$managementBase/warehouse/$lakekeeperWarehouseId").asString()
       response.getStatus match {
         case 404 => // already gone — the idempotent goal state
-        case 409 if isUnfinishedTasksBody(response.getBody) =>
+        case 409 if errorTypeOf(response.getBody).contains("WarehouseHasUnfinishedTasks") =>
           throw new UnfinishedTasksConflictException(response.getBody)
         case status => failOn(status, response.getBody, DeleteWarehouseAction)
       }
@@ -184,13 +384,91 @@ class LakekeeperClient(
   private class UnfinishedTasksConflictException(body: String)
       extends RuntimeException(s"Lakekeeper $DeleteWarehouseAction failed (HTTP 409): $body")
 
-  /** Lakekeeper's "purge queue still draining" 409 body — the only retried error. */
-  private def isUnfinishedTasksBody(body: String): Boolean =
-    try {
-      mapper.readTree(body).path("error").path("type").asText() == "WarehouseHasUnfinishedTasks"
-    } catch {
-      case _: Exception => false
+  private def isSuccess(status: Int): Boolean = status >= 200 && status < 300
+
+  /**
+    * What a warehouse named `name` is made with: this deployment's bucket, under `keyPrefix`,
+    * at its object store's endpoint and region, reached by path, with the platform's static
+    * credentials and STS off.
+    */
+  private def warehousePayload(name: String, keyPrefix: String): ObjectNode = {
+    val payload = mapper.createObjectNode()
+    payload.put("warehouse-name", name)
+    payload.put("project-id", DefaultProjectId)
+    val profile = payload.putObject("storage-profile")
+    profile.put("type", "s3")
+    profile.put("bucket", StorageConfig.icebergRESTCatalogS3Bucket)
+    profile.put("key-prefix", keyPrefix)
+    profile.put("region", StorageConfig.s3Region)
+    profile.put("endpoint", StorageConfig.s3Endpoint)
+    profile.put("flavor", "s3-compat")
+    profile.put("path-style-access", true)
+    profile.put("sts-enabled", false)
+    payload.set[JsonNode]("storage-credential", storageCredential())
+    payload
+  }
+
+  private def storageCredential(): ObjectNode =
+    mapper
+      .createObjectNode()
+      .put("type", "s3")
+      .put("credential-type", "access-key")
+      .put("aws-access-key-id", StorageConfig.s3Username)
+      .put("aws-secret-access-key", StorageConfig.s3Password)
+
+  /**
+    * Sets the endpoint of `stored`, a warehouse as Lakekeeper lists it, to this deployment's,
+    * with the platform's credentials. The rest of its profile stays as stored: Lakekeeper refuses
+    * a profile whose key prefix or region would change.
+    */
+  private def refreshEndpoint(stored: JsonNode): Unit = {
+    val id = stored.path("warehouse-id").asText()
+    val profile = stored.path("storage-profile")
+    if (!profile.isObject) {
+      throw new RuntimeException(s"Lakekeeper lists warehouse $id with no storage profile.")
     }
+    val payload = mapper.createObjectNode()
+    payload.set[JsonNode](
+      "storage-profile",
+      profile.deepCopy[ObjectNode]().put("endpoint", StorageConfig.s3Endpoint)
+    )
+    payload.set[JsonNode]("storage-credential", storageCredential())
+    val response = post(s"$managementBase/warehouse/${segment(id)}/storage", payload)
+    failOn(response.getStatus, response.getBody, s"refresh the storage of warehouse $id")
+  }
+
+  /** The warehouse named `name`, as Lakekeeper lists it; None when there is none. */
+  private def warehouseNamed(name: String): Option[JsonNode] = {
+    val response = get(s"$managementBase/warehouse").asString()
+    failOn(response.getStatus, response.getBody, "list warehouses")
+    mapper
+      .readTree(response.getBody)
+      .path("warehouses")
+      .iterator()
+      .asScala
+      .find(_.path("name").asText() == name)
+  }
+
+  /** The catalog prefix of the warehouse named `warehouseName`, looked up once. */
+  private def prefixOf(warehouseName: String): String =
+    prefixes.getOrElse(
+      warehouseName, {
+        val response =
+          get(s"$catalogBase/config").queryString("warehouse", warehouseName).asString()
+        failOn(response.getStatus, response.getBody, s"read the config of '$warehouseName'")
+        val config = mapper.readTree(response.getBody)
+        val prefix = Seq("overrides", "defaults")
+          .map(config.path(_).path("prefix"))
+          .find(_.isTextual)
+          .map(_.asText())
+          .getOrElse {
+            throw new RuntimeException(
+              s"Lakekeeper's config of '$warehouseName' names no prefix: ${response.getBody}"
+            )
+          }
+        prefixes.putIfAbsent(warehouseName, prefix).getOrElse(prefix)
+      }
+    )
 
   /** Top-level namespaces in the warehouse. Texera's execution namespaces are single-level. */
   private def listNamespaces(lakekeeperWarehouseId: UUID): List[String] =
@@ -202,7 +480,7 @@ class LakekeeperClient(
 
   private def listTables(lakekeeperWarehouseId: UUID, namespace: String): List[String] =
     fetchAllPages(
-      s"$catalogBase/$lakekeeperWarehouseId/namespaces/${urlEncode(namespace)}/tables",
+      s"$catalogBase/$lakekeeperWarehouseId/namespaces/${segment(namespace)}/tables",
       "identifiers",
       s"list tables of '$namespace'"
     )(identifier => identifier.get("name").asText())
@@ -219,7 +497,7 @@ class LakekeeperClient(
     val results = ListBuffer[String]()
     var pageToken: Option[String] = None
     do {
-      val request = Unirest.get(url)
+      val request = get(url)
       pageToken.foreach(request.queryString("pageToken", _))
       val response = request.asString()
       if (response.getStatus == 404) {

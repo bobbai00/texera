@@ -32,6 +32,7 @@ import org.apache.iceberg.io.{CloseableIterator, InputFile}
 import org.apache.iceberg.jdbc.JdbcCatalog
 import org.apache.iceberg.parquet.{Parquet, ParquetValueReader}
 import org.apache.iceberg.rest.RESTCatalog
+import org.apache.iceberg.rest.auth.AuthProperties
 import org.apache.iceberg.types.Type.PrimitiveType
 import org.apache.iceberg.types.Types
 import org.apache.iceberg.{
@@ -124,16 +125,13 @@ object IcebergUtil {
   }
 
   /**
-    * Creates and initializes a RESTCatalog with the given parameters.
-    * - Configures the catalog to interact with a REST endpoint.
-    * - The `warehouse` parameter specifies the root directory for storing table data.
-    * - Sets the file I/O implementation to `HadoopFileIO`.
-    * - Authentication support is not implemented yet (see TODO).
+    * Creates and initializes a RESTCatalog for warehouse `warehouse` of the catalog at `uri`,
+    * whose tables are read and written through `S3FileIO`. The S3 settings (endpoint, region,
+    * and the signing of each request) come from the catalog at runtime.
     *
-    * Note: The only tested REST catalog implementation is `tabulario/iceberg-rest`
-    * (https://hub.docker.com/r/tabulario/iceberg-rest).
-    *
-    * TODO: Add authentication support, such as OAuth2, using `OAuth2Properties`.
+    * Every request the catalog gets from the client, the S3 remote-signing ones included,
+    * carries the token [[CatalogTokenAuthManager]] gives for `execution`: the client speaks for
+    * that execution, or for none when it is None.
     *
     * Every call to the catalog, the one that initializes it included, waits at most
     * `connectionTimeoutMs` for a connection and `socketTimeoutMs` for the catalog to answer,
@@ -142,8 +140,9 @@ object IcebergUtil {
     * recorder, say, whose beat then stops though the unit is alive.
     *
     * @param catalogName the name of the catalog.
-    * @param warehouse   the root path for the warehouse where the tables are stored.
+    * @param warehouse   the warehouse of the catalog the tables are in.
     * @param uri         where the catalog is.
+    * @param execution   the execution the client speaks for; None for none.
     * @return the initialized RESTCatalog instance.
     */
   def createRestCatalog(
@@ -151,19 +150,19 @@ object IcebergUtil {
       warehouse: String,
       uri: String = StorageConfig.icebergRESTCatalogUri,
       connectionTimeoutMs: Long = StorageConfig.icebergRESTCatalogConnectionTimeoutMs,
-      socketTimeoutMs: Int = StorageConfig.icebergRESTCatalogSocketTimeoutMs
+      socketTimeoutMs: Int = StorageConfig.icebergRESTCatalogSocketTimeoutMs,
+      execution: Option[Long] = None
   ): RESTCatalog = {
     val catalog = new RESTCatalog()
 
-    // S3 settings (endpoint, region, credentials) are supplied by the REST
-    // catalog server at runtime.
     val properties = Map(
       "warehouse" -> warehouse,
       CatalogProperties.URI -> uri,
       CatalogProperties.FILE_IO_IMPL -> classOf[S3FileIO].getName,
       RestConnectionTimeoutMs -> connectionTimeoutMs.toString,
-      RestSocketTimeoutMs -> socketTimeoutMs.toString
-    )
+      RestSocketTimeoutMs -> socketTimeoutMs.toString,
+      AuthProperties.AUTH_TYPE -> classOf[CatalogTokenAuthManager].getName
+    ) ++ execution.map(CatalogTokenAuthManager.ExecutionProperty -> _.toString)
 
     catalog.initialize(catalogName, properties.asJava)
     catalog
@@ -196,9 +195,55 @@ object IcebergUtil {
   }
 
   /**
+    * Makes namespace `namespace` in `catalog`, unless it is there already. The engine makes no
+    * namespace: the Dashboard service makes an execution's before the execution starts (see
+    * `ExecutionNamespace`), and the execution may use it but make none.
+    *
+    * @throws IllegalArgumentException if the catalog has no namespaces.
+    */
+  def createNamespace(catalog: Catalog, namespace: String): Unit =
+    try {
+      namespacesOf(catalog).createNamespace(
+        Namespace.of(namespace),
+        Map.empty[String, String].asJava
+      )
+    } catch {
+      case _: AlreadyExistsException => ()
+    }
+
+  /**
+    * Whether `catalog` has namespace `namespace`.
+    *
+    * @throws IllegalArgumentException if the catalog has no namespaces.
+    */
+  def namespaceExists(catalog: Catalog, namespace: String): Boolean =
+    namespacesOf(catalog).namespaceExists(Namespace.of(namespace))
+
+  /**
+    * Drops namespace `namespace` of `catalog`, which holds no table any more.
+    *
+    * @return false when there is no such namespace
+    * @throws IllegalArgumentException if the catalog has no namespaces.
+    */
+  def dropNamespace(catalog: Catalog, namespace: String): Boolean =
+    namespacesOf(catalog).dropNamespace(Namespace.of(namespace))
+
+  private def namespacesOf(catalog: Catalog): SupportsNamespaces =
+    catalog match {
+      case namespaces: SupportsNamespaces => namespaces
+      case _ =>
+        throw new IllegalArgumentException(
+          s"Catalog ${catalog.getClass.getName} does not support namespaces"
+        )
+    }
+
+  /**
     * Creates a new Iceberg table with the specified schema and properties.
     * - Drops the existing table if `overrideIfExists` is true and the table already exists.
     * - Creates an unpartitioned table with custom commit retry properties.
+    *
+    * The table's namespace must be there: this makes none (see [[createNamespace]]), and the
+    * REST catalog refuses a table in a namespace that is not.
     *
     * @param catalog the Iceberg catalog to manage the table.
     * @param tableNamespace the namespace of the table.
@@ -223,23 +268,10 @@ object IcebergUtil {
       TableProperties.COMMIT_MIN_RETRY_WAIT_MS -> StorageConfig.icebergTableCommitMinRetryWaitMs.toString
     )
 
-    val namespace = Namespace.of(tableNamespace)
-
-    catalog match {
-      case nsCatalog: SupportsNamespaces =>
-        try nsCatalog.createNamespace(namespace, Map.empty[String, String].asJava)
-        catch {
-          case _: AlreadyExistsException => ()
-        }
-      case _ =>
-        throw new IllegalArgumentException(
-          s"Catalog ${catalog.getClass.getName} does not support namespaces"
-        )
-    }
-
     val identifier = TableIdentifier.of(tableNamespace, tableName)
     if (catalog.tableExists(identifier) && overrideIfExists) {
-      catalog.dropTable(identifier)
+      // Purged, as every drop is: the files of a table no catalog names are never deleted.
+      catalog.dropTable(identifier, true)
     }
     catalog.createTable(
       identifier,

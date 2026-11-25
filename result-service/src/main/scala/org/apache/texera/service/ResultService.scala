@@ -24,6 +24,7 @@ import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, SubstitutingSourceProvider}
 import io.dropwizard.core.Application
 import io.dropwizard.core.setup.{Bootstrap, Environment}
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.auth.{AuthFeatures, RequestLoggingFilter, RoleAnnotationEnforcer}
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.SqlServer
@@ -51,6 +52,8 @@ class ResultService extends Application[ResultServiceConfiguration] with LazyLog
   }
 
   override def run(configuration: ResultServiceConfiguration, environment: Environment): Unit = {
+    // It reads the results of every execution, so it reaches the catalog as Texera itself.
+    CatalogIdentity.use(CatalogIdentity.Platform)
     // Bridge this service's logs to the OTel collector under its own service.name.
     org.apache.texera.observability.OtelInit.init("result-service")
     // Serve backend at /api

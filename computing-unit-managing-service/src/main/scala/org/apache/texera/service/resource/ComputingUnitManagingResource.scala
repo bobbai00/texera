@@ -418,11 +418,13 @@ object ComputingUnitManagingResource {
       lookup: String => Option[String]
   ): Map[String, Any] =
     icebergEnvironmentVariables ++ Map(
-      // S3 variables are passed to CU for R UDF large binary support
+      // The object store, for large binaries, with the unit's own key, which a deployment
+      // limits to the large-binaries bucket: a unit reaches the lake's tables only through the
+      // catalog.
       EnvironmentalVariable.ENV_S3_ENDPOINT -> StorageConfig.s3Endpoint,
       EnvironmentalVariable.ENV_S3_REGION -> StorageConfig.s3Region,
-      EnvironmentalVariable.ENV_S3_AUTH_USERNAME -> StorageConfig.s3Username,
-      EnvironmentalVariable.ENV_S3_AUTH_PASSWORD -> StorageConfig.s3Password
+      EnvironmentalVariable.ENV_S3_AUTH_USERNAME -> StorageConfig.s3UnitUsername,
+      EnvironmentalVariable.ENV_S3_AUTH_PASSWORD -> StorageConfig.s3UnitPassword
     ) ++ requiredComputingUnitEnv(lookup) ++ optionalComputingUnitEnv(lookup)
 
   private lazy val computingUnitEnvironmentVariables: Map[String, Any] =

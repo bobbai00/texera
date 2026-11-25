@@ -27,8 +27,6 @@ _INIT_KWARGS = dict(
     postgres_password="pg_pass",
     rest_catalog_uri="http://rest:8181",
     rest_catalog_warehouse_name="warehouse",
-    table_result_namespace="result_ns",
-    table_state_namespace="state_ns",
     directory_path="/data/iceberg",
     commit_batch_size="4096",
     s3_endpoint="http://rustfs:9000",
@@ -71,8 +69,6 @@ class TestInitialize:
         assert fresh_config.ICEBERG_POSTGRES_CATALOG_PASSWORD == "pg_pass"
         assert fresh_config.ICEBERG_REST_CATALOG_URI == "http://rest:8181"
         assert fresh_config.ICEBERG_REST_CATALOG_WAREHOUSE_NAME == "warehouse"
-        assert fresh_config.ICEBERG_TABLE_RESULT_NAMESPACE == "result_ns"
-        assert fresh_config.ICEBERG_TABLE_STATE_NAMESPACE == "state_ns"
         assert fresh_config.ICEBERG_FILE_STORAGE_DIRECTORY_PATH == "/data/iceberg"
         assert fresh_config.S3_ENDPOINT == "http://rustfs:9000"
         assert fresh_config.S3_REGION == "us-west-2"

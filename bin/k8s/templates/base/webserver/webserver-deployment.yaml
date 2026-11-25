@@ -71,27 +71,32 @@ spec:
             # FileService Access: the results an export saves into a dataset are uploaded there.
             - name: FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT
               value: http://{{ .Values.fileService.name }}-svc:9092/api/dataset/did/upload
-            # Workflow Result (Lakekeeper REST catalog)
+            # Workflow Result (Lakekeeper REST catalog). The Dashboard bootstraps the catalog when
+            # it starts and registers the shared warehouse: its name, and the bucket and key
+            # prefix it keeps its tables under.
             - name: STORAGE_ICEBERG_CATALOG_TYPE
               value: rest
             - name: STORAGE_ICEBERG_CATALOG_REST_URI
               value: http://{{ .Release.Name }}-lakekeeper:{{ .Values.lakekeeper.catalog.service.externalPort }}/catalog
             - name: STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME
               value: {{ .Values.lakekeeperInit.warehouse.name | quote }}
-            - name: STORAGE_ICEBERG_CATALOG_REST_REGION
-              value: {{ .Values.lakekeeperInit.warehouse.region | quote }}
             - name: STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET
               value: {{ .Values.lakekeeperInit.warehouse.s3Bucket | quote }}
-            # Object storage, which the Dashboard uses directly: for example, it registers each
-            # user's warehouse with Lakekeeper against this store, deletes executions' large
-            # binaries from it, and signs, with these keys, the links a run reads its input
-            # files through. The compiling service is given none of them.
+            - name: STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX
+              value: {{ required "lakekeeperInit.warehouse.keyPrefix must not be empty (#7739)" .Values.lakekeeperInit.warehouse.keyPrefix | quote }}
+            # The audience of the tokens it signs for the catalog, its own and each execution's:
+            # the one Lakekeeper accepts.
+            - name: STORAGE_ICEBERG_CATALOG_REST_TOKEN_AUDIENCE
+              value: {{ .Values.lakekeeper.auth.oauth2.audience | quote }}
+            # Object storage, which the Dashboard uses directly: for example, it registers the
+            # shared warehouse and each user's warehouse with Lakekeeper against this store, in its
+            # region, deletes executions' large binaries from it, and signs, with these keys, the
+            # links a run reads its input files through. The compiling service is given none of
+            # them.
             - name: STORAGE_S3_ENDPOINT
               value: {{ include "texera.s3.endpoint" . }}
-            {{- if .Values.storage.s3.endpoint }}
             - name: STORAGE_S3_REGION
               value: {{ .Values.storage.s3.region | quote }}
-            {{- end }}
             - name: STORAGE_S3_AUTH_USERNAME
               valueFrom:
                 secretKeyRef:

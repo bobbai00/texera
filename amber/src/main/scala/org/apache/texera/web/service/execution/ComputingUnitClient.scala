@@ -81,9 +81,11 @@ trait ComputingUnitClient {
     * Hands `plan`, the plan of an execution created for computing unit `cuid`, to that unit,
     * which starts the execution it names.
     *
-    * @param uid the user the execution is created for
+    * @param uid          the user the execution is created for
+    * @param catalogToken what the execution's requests to the catalog carry
+    *                     ([[ExecutionCatalogAccess.open]]); None for a catalog that takes none
     */
-  def start(cuid: Int, plan: String, uid: Int): Handover
+  def start(cuid: Int, plan: String, uid: Int, catalogToken: Option[String]): Handover
 
   /**
     * Hands `update`, a change to an operator of a paused execution, to computing unit `cuid`,
@@ -98,7 +100,9 @@ trait ComputingUnitClient {
   * Computing units over HTTP: `POST /api/execution/start` and `POST /api/execution/update`
   * on the unit (`org.apache.texera.web.resource.ExecutionHandoverResource`). A request names
   * the user it is for in [[HeaderField.UserId]]: the unit checks no token, and this service
-  * has checked the user's.
+  * has checked the user's. A start's body is `{plan, computingUnitId, catalogToken}`, its token
+  * null for a catalog that takes none: the unit verifies no token, and hands that one to the
+  * catalog. Nothing here logs a request's body.
   *
   * @param addressOf where a computing unit is reached; None for a unit there is no record of
   * @param deadline  how long a unit may take to answer
@@ -116,11 +120,15 @@ class HttpComputingUnitClient(
     .connectTimeout(Duration.ofMillis(connectTimeout.toMillis))
     .build()
 
-  override def start(cuid: Int, plan: String, uid: Int): Handover =
+  override def start(cuid: Int, plan: String, uid: Int, catalogToken: Option[String]): Handover =
     post(
       cuid,
       "/api/execution/start",
-      mapper.createObjectNode().put("plan", plan).put("computingUnitId", cuid),
+      mapper
+        .createObjectNode()
+        .put("plan", plan)
+        .put("computingUnitId", cuid)
+        .put("catalogToken", catalogToken.orNull),
       uid
     )
 

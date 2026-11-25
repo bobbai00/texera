@@ -20,6 +20,11 @@
 package org.apache.texera.amber.engine.common.executionrecord
 
 import com.typesafe.scalalogging.LazyLogging
+import org.apache.iceberg.exceptions.{
+  ForbiddenException,
+  NoSuchNamespaceException,
+  NotAuthorizedException
+}
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
   ConsoleRow,
@@ -172,6 +177,8 @@ private final case class WriteKind(failed: String, madeAgain: String)
   * lives: a log left without its end would be read as the log of a run whose unit was lost.
   * Console messages alone are bounded: beyond `consoleCapacity` the oldest are dropped. A table
   * that is gone was dropped with its execution: it is not made again, and the recorder stops.
+  * So it does when the lake refuses the record: its catalog takes the execution's token no more,
+  * or holds the execution's namespace no more, as once the execution's access to it has ended.
   *
   * @param beatEveryMs how often the recorder ticks, which the label tells the log's readers
   * @param timed       whether the recorder ticks by itself; false for a caller that calls
@@ -536,7 +543,8 @@ private[executionrecord] final class LakeExecutionRecorder(
   /**
     * Makes one write to the lake, and says whether it was made. One that fails is reported once
     * for as long as writes of its kind keep failing, and what it left in memory is written by
-    * a later commit. A recorder that has stopped writes nothing.
+    * a later commit. A table that is gone, and a lake that refuses the record, stop the
+    * recorder. A recorder that has stopped writes nothing.
     */
   private def attempt(kind: WriteKind)(write: => Unit): Boolean =
     if (halted) false
@@ -553,9 +561,33 @@ private[executionrecord] final class LakeExecutionRecorder(
           )
           stop()
           false
+        case NonFatal(refusal) if refusedForGood(refusal) =>
+          logger.warn(
+            s"The lake refuses the record of execution $executionId, as it does once the " +
+              "execution's access to it has ended: the record is written no more.",
+            refusal
+          )
+          stop()
+          false
         case NonFatal(failure) =>
           if (failing.add(kind)) logger.warn(kind.failed, failure)
           false
+      }
+
+  /**
+    * Whether `failure` is the lake refusing the record for good, whatever wrapped it on its way,
+    * as a write to the object store signed through the catalog is wrapped: the catalog takes the
+    * execution's token no more (`ForbiddenException`, `NotAuthorizedException`), or holds the
+    * execution's namespace no more (`NoSuchNamespaceException`).
+    */
+  private def refusedForGood(failure: Throwable): Boolean =
+    Iterator
+      .iterate(failure)(_.getCause)
+      .takeWhile(_ != null)
+      .exists {
+        case _: ForbiddenException | _: NotAuthorizedException | _: NoSuchNamespaceException =>
+          true
+        case _ => false
       }
 
   /** Ends the recorder: what still waits is dropped, and its thread is let go of. */

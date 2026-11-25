@@ -110,9 +110,13 @@
 #   agent-service                  :3001  Bun --watch (cd agent-service && bun run dev)
 #   frontend                       :4200  ng serve via cd frontend && yarn start
 #
-# Docker infra (postgres / rustfs / lakefs / lakekeeper / litellm / jupyter) IS managed
-# here: `up` brings it up via `docker compose` (project texera-local-dev) and
-# `down` tears down any docker targets. The script warns if expected ports are
+# Docker infra (postgres / rustfs / lakefs / openfga / lakekeeper / litellm / jupyter /
+# gateway) IS managed here: `up` brings it up via `docker compose` (project
+# texera-local-dev) and `down` tears down any docker targets. Lakekeeper and the
+# gateway work with the services this script runs on the host: Lakekeeper starts
+# once the access control service publishes the key catalog tokens are checked
+# with, and the gateway (:8086) carries the computing unit's websocket, which the
+# dev server's proxy sends there. The script warns if expected ports are
 # unreachable. Before any sbt build the postgres schema is reconciled: a fresh
 # DB is bootstrapped from sql/texera_ddl.sql, and pending sql/updates/*.sql
 # from sql/changelog.xml are applied automatically (tracked in liquibase's
@@ -657,8 +661,8 @@ _detect_host_lan_ip() {
 # `version`, `status`, `--help`, or `-i` don't talk to RustFS and shouldn't
 # refuse to run just because the laptop is offline.
 _require_host_lan_ip() {
-    [[ -n "${HOST_LAN_IP:-}" ]] && return 0
-    HOST_LAN_IP="$(_detect_host_lan_ip)" || HOST_LAN_IP=""
+    # An exported HOST_LAN_IP is taken as it is: only the addresses below are derived from it.
+    [[ -n "${HOST_LAN_IP:-}" ]] || HOST_LAN_IP="$(_detect_host_lan_ip)" || HOST_LAN_IP=""
     if [[ -z "$HOST_LAN_IP" ]]; then
         local probes="" bridge_note=""
         case "$(uname -s 2>/dev/null)" in
@@ -669,16 +673,23 @@ _require_host_lan_ip() {
                     bridge_note=" outside the container bridges" ;;
         esac
         echo "FATAL: could not detect a host LAN IP." >&2
-        echo "       RustFS needs an address reachable from both docker (lakekeeper" >&2
-        echo "       does S3 ops) and the host (JVMs read signed URLs back); none" >&2
-        echo "       of $probes offered a non-loopback IPv4${bridge_note}." >&2
+        echo "       RustFS, the access control service and the computing unit need an" >&2
+        echo "       address reachable from both docker (lakekeeper, the gateway) and the" >&2
+        echo "       host (JVMs read signed URLs back); none of $probes" >&2
+        echo "       offered a non-loopback IPv4${bridge_note}." >&2
         echo "       Connect to a network or export HOST_LAN_IP=<your-IP> explicitly." >&2
         exit 1
     fi
     export HOST_LAN_IP
-    # STORAGE_S3_ENDPOINT below uses the parameter-default form so it
-    # picks up HOST_LAN_IP once we set it here.
+    # Both below use the parameter-default form so they pick up HOST_LAN_IP
+    # once we set it here.
     export STORAGE_S3_ENDPOINT="${STORAGE_S3_ENDPOINT:-http://$HOST_LAN_IP:9000}"
+    # The computing unit. Read by texera-web, which hands it the plan of each execution it
+    # creates (it waits 5s for a connection and 30s for an answer), by the agent service, which
+    # waits for its executions there, and by the access control service, which answers it to
+    # the gateway as where the unit's websocket goes: the gateway is a container, so the address
+    # must be one it reaches too.
+    export WORKFLOW_EXECUTION_SERVICE_ENDPOINT="${WORKFLOW_EXECUTION_SERVICE_ENDPOINT:-http://$HOST_LAN_IP:8085}"
 }
 
 export STORAGE_JDBC_URL="${STORAGE_JDBC_URL:-jdbc:postgresql://localhost:5432/texera_db?currentSchema=texera_db,public}"
@@ -694,6 +705,8 @@ export STORAGE_ICEBERG_CATALOG_TYPE="${STORAGE_ICEBERG_CATALOG_TYPE:-rest}"
 export STORAGE_ICEBERG_CATALOG_REST_URI="${STORAGE_ICEBERG_CATALOG_REST_URI:-http://localhost:8181/catalog}"
 export STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME="${STORAGE_ICEBERG_CATALOG_REST_WAREHOUSE_NAME:-texera}"
 export STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET="${STORAGE_ICEBERG_CATALOG_REST_S3_BUCKET:-texera-iceberg}"
+# texera-web creates the shared warehouse under this prefix of the bucket when it starts.
+export STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX="${STORAGE_ICEBERG_CATALOG_REST_KEY_PREFIX:-shared}"
 export STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME="${STORAGE_ICEBERG_CATALOG_POSTGRES_USERNAME:-texera}"
 export STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD="${STORAGE_ICEBERG_CATALOG_POSTGRES_PASSWORD:-password}"
 export STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME="${STORAGE_ICEBERG_CATALOG_POSTGRES_URI_WITHOUT_SCHEME:-localhost:5432/texera_iceberg_catalog}"
@@ -709,10 +722,8 @@ export TEXERA_DASHBOARD_SERVICE_ENDPOINT="${TEXERA_DASHBOARD_SERVICE_ENDPOINT:-h
 # Read by the agent service, and by texera-web (the Dashboard), which asks the compiling service
 # for the plan of each execution it creates: it waits 5s for a connection and 60s for an answer.
 export WORKFLOW_COMPILING_SERVICE_ENDPOINT="${WORKFLOW_COMPILING_SERVICE_ENDPOINT:-http://localhost:9090}"
-# The computing unit. Read by texera-web, which hands it the plan of each execution it creates
-# (it waits 5s for a connection and 30s for an answer), and by the agent service, which waits
-# for its executions there.
-export WORKFLOW_EXECUTION_SERVICE_ENDPOINT="${WORKFLOW_EXECUTION_SERVICE_ENDPOINT:-http://localhost:8085}"
+# WORKFLOW_EXECUTION_SERVICE_ENDPOINT, the computing unit's address, is set lazily by
+# _require_host_lan_ip: it is the host's LAN address, which the gateway's container reaches too.
 export FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT="${FILE_SERVICE_GET_DATASET_PRESIGNED_URL_ENDPOINT:-http://localhost:9092/api/dataset/presign-download}"
 export FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT="${FILE_SERVICE_UPLOAD_ONE_FILE_TO_DATASET_ENDPOINT:-http://localhost:9092/api/dataset/did/upload}"
 export LITELLM_BASE_URL="${LITELLM_BASE_URL:-http://localhost:4000}"
@@ -881,9 +892,11 @@ SERVICES=(
     postgres
     rustfs
     lakefs
+    openfga
     lakekeeper
     litellm
     jupyter
+    gateway
     config-service
     access-control-service
     file-service
@@ -906,9 +919,13 @@ SERVICES=(
 amap_set SVC_TYPE postgres   docker; amap_set SVC_PORT postgres   5432; amap_set SVC_CWD postgres   "."
 amap_set SVC_TYPE rustfs     docker; amap_set SVC_PORT rustfs     9000; amap_set SVC_CWD rustfs     "."
 amap_set SVC_TYPE lakefs     docker; amap_set SVC_PORT lakefs     8000; amap_set SVC_CWD lakefs     "."
+# Not published on the host: only Lakekeeper calls it, on this port.
+amap_set SVC_TYPE openfga    docker; amap_set SVC_PORT openfga    8081; amap_set SVC_CWD openfga    "."
 amap_set SVC_TYPE lakekeeper docker; amap_set SVC_PORT lakekeeper 8181; amap_set SVC_CWD lakekeeper "."
 amap_set SVC_TYPE litellm    docker; amap_set SVC_PORT litellm    4000; amap_set SVC_CWD litellm    "."
 amap_set SVC_TYPE jupyter    docker; amap_set SVC_PORT jupyter    9100; amap_set SVC_CWD jupyter    "."
+# The port frontend/proxy.config.json sends /wsapi to (gateway_up).
+amap_set SVC_TYPE gateway    docker; amap_set SVC_PORT gateway    8086; amap_set SVC_CWD gateway    "."
 
 amap_set SVC_TYPE       config-service jvm
 amap_set SVC_PORT       config-service 9094
@@ -1008,8 +1025,11 @@ DOCKER_PROJECT="texera-local-dev"
 DOCKER_COMPOSE_FILE="$SELF_ROOT/bin/single-node/docker-compose.yml"
 DOCKER_OVERLAY_FILE="$SELF_ROOT/bin/local-dev/docker-compose.override.yml"
 DOCKER_ENV_FILE="$SELF_ROOT/bin/single-node/.env"
-DOCKER_INFRA_SERVICES=(postgres rustfs rustfs-init lakefs lakekeeper-migrate lakekeeper lakekeeper-init litellm jupyter)
-DOCKER_INFRA_LONGLIVED=(postgres rustfs lakefs lakekeeper litellm jupyter)  # exclude one-shot init jobs
+# What infra_up starts before the build. Lakekeeper and the gateway are started on their own
+# (lakekeeper_up, gateway_up): in bin/single-node both depend on the containerized services,
+# which this script runs on the host.
+DOCKER_INFRA_SERVICES=(postgres rustfs rustfs-init lakefs openfga-migrate openfga litellm jupyter)
+DOCKER_INFRA_LONGLIVED=(postgres rustfs lakefs openfga lakekeeper litellm jupyter gateway)  # exclude one-shot init jobs
 
 # Build the array of -f flags: base single-node compose + local-dev overlay
 # (the overlay publishes infra ports to the host, which the upstream compose
@@ -1018,6 +1038,17 @@ docker_compose_files() {
     local args=(-f "$DOCKER_COMPOSE_FILE")
     [[ -f "$DOCKER_OVERLAY_FILE" ]] && args+=(-f "$DOCKER_OVERLAY_FILE")
     printf '%s\n' "${args[@]}"
+}
+
+# `docker compose` on this project: the single-node compose file under the local-dev overlay,
+# with the single-node .env. The overlay points containers at the host's address, so that is
+# resolved first.
+infra_compose() {
+    _require_host_lan_ip
+    local files=() f=""
+    while IFS= read -r f; do files+=("$f"); done < <(docker_compose_files)
+    docker compose --progress auto -p "$DOCKER_PROJECT" --env-file "$DOCKER_ENV_FILE" \
+        "${files[@]}" "$@"
 }
 
 # --------- TUI helpers ---------
@@ -1687,9 +1718,8 @@ docker_svc_state() {
 }
 
 infra_up() {
-    # Resolve the host LAN IP now (lazy) — both the docker compose stack
-    # (lakekeeper-init reads STORAGE_S3_ENDPOINT) and the host JVMs about
-    # to start need it pointing at a host-reachable RustFS.
+    # Resolve the host LAN IP now (lazy): the host JVMs about to start need it
+    # pointing at a host-reachable RustFS and computing unit.
     _require_host_lan_ip
     if [[ "$(infra_state)" == external:* ]]; then
         tui_err "infra: ports already taken by non-script containers"
@@ -1697,14 +1727,85 @@ infra_up() {
         printf "  ${DIM}  docker compose -p texera-dev down${RESET}\n"
         return 1
     fi
-    local files=($(docker_compose_files))
+    infra_require_openfga_database
     tui_step "infra: docker compose up -d  ${DIM}(in-place TTY progress)${RESET}"
     # No stdout redirect → docker compose detects TTY and renders an in-place
     # progress panel that overwrites itself instead of appending event lines.
     # --progress=tty forces it even if stdout looks like a pipe.
-    docker compose --progress auto -p "$DOCKER_PROJECT" --env-file "$DOCKER_ENV_FILE" "${files[@]}" \
-        up -d "${DOCKER_INFRA_SERVICES[@]}"
-    tui_ok "infra: ${#DOCKER_INFRA_LONGLIVED[@]} containers up"
+    if ! infra_compose up -d "${DOCKER_INFRA_SERVICES[@]}"; then
+        tui_err "infra: docker compose up failed"
+        return 1
+    fi
+    tui_ok "infra: up  ${DIM}(lakekeeper starts after the services on the host)${RESET}"
+}
+
+# Lakekeeper asks OpenFGA about every request to the lake's catalog, and OpenFGA keeps its data
+# in the texera_openfga database, which Postgres creates when its volume is new
+# (sql/texera_openfga.sql). A volume made before that has no such database, and its catalog
+# cannot be carried over either: its tables have nothing in OpenFGA, so Lakekeeper refuses every
+# request about them once it checks access. Such a volume stops `up` here, with what to do.
+infra_require_openfga_database() {
+    local pg="texera-postgres" i=0 has=""
+    infra_compose up -d postgres || return 0
+    # Over TCP: while Postgres sets a new volume up, it answers only on its socket.
+    while ! docker exec "$pg" pg_isready -h 127.0.0.1 -U texera -q 2>/dev/null; do
+        if (( i >= 60 )); then
+            tui_warn "postgres: not ready after 60s -- skipping the catalog check"
+            return 0
+        fi
+        sleep 1
+        i=$((i+1))
+    done
+    has=$(docker exec "$pg" psql -U texera -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = 'texera_openfga'" 2>/dev/null || true)
+    [[ "$has" == "1" ]] && return 0
+    tui_err "postgres: this volume is older than the lake catalog's access checks (it has no texera_openfga database)"
+    printf "  ${DIM}Its catalog cannot be carried over. Start from new data, which deletes${RESET}\n"
+    printf "  ${DIM}the local workflows, datasets and accounts:${RESET}\n"
+    printf "  ${DIM}  docker compose -p %s down --volumes${RESET}\n" "$DOCKER_PROJECT"
+    exit 1
+}
+
+# Lakekeeper, once the services it needs on the host are on their way. When it starts it reads
+# the key it checks catalog tokens with from the access control service, and stops when it
+# cannot; and its migration, which also writes its model into OpenFGA, has to be done. In
+# bin/single-node it depends on the containerized access control service, which this script
+# runs on the host instead, so it is started on its own (--no-deps).
+lakekeeper_up() {
+    local acs_port=""
+    acs_port=$(amap_get SVC_PORT access-control-service)
+    tui_step "lakekeeper: migrating its database and its model in OpenFGA"
+    if ! infra_compose up -d lakekeeper-migrate \
+        || [[ "$(docker wait "$(_docker_container_for lakekeeper-migrate)" 2>/dev/null)" != "0" ]]; then
+        tui_err "lakekeeper: its migration did not finish  ${DIM}(docker compose -p $DOCKER_PROJECT logs lakekeeper-migrate)${RESET}"
+        return 1
+    fi
+    # Dropwizard opens the port once every route is served, the catalog issuer's among them.
+    if ! tui_run_with_spinner /dev/null "lakekeeper: waiting for the access control service (:$acs_port)" \
+            wait_for_port "$acs_port" 90; then
+        tui_err "lakekeeper: not started, the access control service is not up  ${DIM}(bin/local-dev.sh logs access-control-service)${RESET}"
+        return 1
+    fi
+    if ! infra_compose up -d --no-deps lakekeeper; then
+        tui_err "lakekeeper: docker compose up failed"
+        return 1
+    fi
+    tui_ok "lakekeeper: started  ${DIM}(it reads the catalog issuer at http://$HOST_LAN_IP:$acs_port)${RESET}"
+}
+
+# bin/single-node's gateway, in front of the services this script runs on the host (see its
+# entry in the overlay): frontend/proxy.config.json sends a computing unit's websocket to it.
+# Its port there is texera-web's here, so it gets its own, which the shell's TEXERA_PORT sets
+# over .env's; and in bin/single-node it depends on the containerized services, so it is
+# started on its own (--no-deps).
+gateway_up() {
+    local port=""
+    port=$(amap_get SVC_PORT gateway)
+    if ! TEXERA_PORT="$port" infra_compose up -d --no-deps gateway; then
+        tui_err "gateway: docker compose up failed  ${DIM}(is :$port free?)${RESET}"
+        return 1
+    fi
+    tui_ok "gateway: up on :$port"
 }
 
 infra_down() {
@@ -1938,9 +2039,7 @@ infra_apply_sql_updates() {
 ensure_postgres_for_build() {
     if [[ "$(docker_svc_state postgres)" != "running" ]]; then
         tui_step "postgres: starting (required for jOOQ codegen at build time)"
-        local files=($(docker_compose_files))
-        docker compose --progress auto -p "$DOCKER_PROJECT" --env-file "$DOCKER_ENV_FILE" "${files[@]}" \
-            up -d postgres >/dev/null 2>&1 || true
+        infra_compose up -d postgres >/dev/null 2>&1 || true
     fi
     infra_ensure_db_schema
 }
@@ -2183,10 +2282,11 @@ start_one() {
     local svc="$1"
     local type=""
     type=$(amap_get SVC_TYPE "$svc")
-    # JVMs and docker services need STORAGE_S3_ENDPOINT exported before
-    # launch (JVM clients dial RustFS; lakekeeper bakes the URL into the
-    # warehouse storage profile). yarn/bun watch services don't.
-    if [[ "$type" == "jvm" || "$type" == "docker" ]]; then
+    # Everything but the dev server needs the host's LAN IP exported before
+    # launch: the JVMs dial RustFS and the computing unit at it, the agent
+    # service waits for its executions there, and the containers reach the
+    # host's services at it.
+    if [[ "$type" != "yarn" ]]; then
         _require_host_lan_ip
     fi
     if [[ "$type" == "docker" ]]; then
@@ -2197,17 +2297,23 @@ start_one() {
             return 0
         fi
         phase_set "$svc" starting
-        tui_step "$svc: docker compose up -d $svc"
-        local files=()
-        while read -r f; do files+=("$f"); done < <(docker_compose_files | tr ' ' '\n')
-        docker compose --progress auto -p "$DOCKER_PROJECT" --env-file "$DOCKER_ENV_FILE" \
-            "${files[@]}" up -d "$svc" >/dev/null 2>&1
-        # Don't clear the phase yet — docker `up -d` returns before the
+        # Don't clear the phase once started — docker `up -d` returns before the
         # container is healthy. The TUI's docker_state poller will flip
         # the row to "running" once the container reports healthy; the
         # stale-after-90s rule covers cleanup if that never happens.
-        tui_ok "$svc: started"
-        return
+        case "$svc" in
+            lakekeeper) lakekeeper_up || { phase_clear "$svc"; return 1; } ;;
+            gateway)    gateway_up    || { phase_clear "$svc"; return 1; } ;;
+            *)
+                tui_step "$svc: docker compose up -d $svc"
+                if ! infra_compose up -d "$svc" >/dev/null 2>&1; then
+                    phase_clear "$svc"
+                    tui_err "$svc: docker compose up failed"
+                    return 1
+                fi
+                tui_ok "$svc: started" ;;
+        esac
+        return 0
     fi
     if [[ -n "$(svc_running_pid "$svc")" ]]; then
         tui_ok "$svc: already running ${DIM}(PID $(svc_running_pid "$svc"))${RESET}"
@@ -2893,7 +2999,7 @@ cmd_up() {
     # Bring infra up first so postgres is ready when the build fires.
     # As a bonus rustfs/lakefs/litellm warm up while sbt runs. (#6007)
     local svc=""
-    local has_docker_targets=false
+    local has_docker_targets=false infra_ok=false
     for svc in "${SERVICES[@]}"; do
         [[ "$(amap_get SVC_TYPE "$svc")" == "docker" ]] || continue
         is_skipped "$svc" && continue
@@ -2903,11 +3009,15 @@ cmd_up() {
     if $has_docker_targets; then
         tui_section "Infra"
         case "$(infra_state)" in
-            running)    tui_ok "infra: already running" ;;
+            running)    tui_ok "infra: already running"; infra_ok=true ;;
             external:*) tui_err "infra: ports taken by non-script containers"
                         printf "  ${DIM}docker compose -p texera-dev down${RESET}\n" ;;
-            *)          infra_up || true ;;
+            *)          infra_up && infra_ok=true ;;
         esac
+        # Needs nothing of the host's services to start, only to forward to them.
+        if $infra_ok && ! is_skipped gateway; then
+            gateway_up || true
+        fi
         infra_ensure_db_schema
     fi
 
@@ -2925,6 +3035,8 @@ cmd_up() {
     # and a single redrawing panel below shows progress for ALL of them.
     tui_section "Services  ${DIM}(launching)${RESET}"
     local cwd="" log="" type="" launcher=""
+    # The services below reach RustFS and the computing unit at the host's LAN IP.
+    _require_host_lan_ip
 
     for svc in "${SERVICES[@]}"; do
         is_skipped "$svc" && { tui_skip "$svc: --skip"; continue; }
@@ -2949,6 +3061,12 @@ cmd_up() {
             yarn) ( cd "$cwd" && nohup yarn start  >"$log" 2>&1 </dev/null & ) ;;
         esac
     done
+
+    # Lakekeeper starts once the access control service launched above publishes its key.
+    if $infra_ok && ! is_skipped lakekeeper; then
+        tui_section "Catalog"
+        lakekeeper_up || true
+    fi
 
     tui_section "Health  ${DIM}(refreshing in place)${RESET}"
     local ec=0

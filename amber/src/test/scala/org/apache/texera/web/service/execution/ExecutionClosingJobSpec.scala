@@ -109,10 +109,10 @@ import scala.util.Try
 /**
   * The closing job, on real rows and real tables: the rows are in `MockTexeraDB`, and the logs
   * and results are tables of the catalog the build's tests use (the Postgres JDBC catalog in
-  * CI), named after this suite's own workflow and executions and dropped after it. Executions
-  * are made by [[ExecutionCreator]] unless a case needs a row no create leaves, and what a
-  * computing unit would do to one (write its log, beat, write its results) is done with the
-  * stores a unit uses.
+  * CI), in the namespaces of this suite's own executions, which are dropped after it.
+  * Executions are made by [[ExecutionCreator]] unless a case needs a row no create leaves, and
+  * what a computing unit would do to one (write its log, beat, write its results) is done with
+  * the stores a unit uses.
   *
   * A case ticks the job itself, on a clock it sets: the clock starts five minutes after the
   * case's rows are made, so a time a "unit" writes into a log lies in the job's past. Every
@@ -157,9 +157,17 @@ class ExecutionClosingJobSpec
 
   /** The plan each create answered, by execution: what its unit would be handed. */
   private val plans = new java.util.concurrent.ConcurrentHashMap[Long, String]()
-  private val madeLogs = new ConcurrentLinkedQueue[URI]()
-  private val madeTables = new ConcurrentLinkedQueue[URI]()
   private val nextSeq = new ConcurrentHashMap[URI, java.lang.Long]()
+
+  /**
+    * The Dashboard's catalog access for the creates and expiries of the suite: it makes each
+    * execution's namespace in the catalog the build's tests use, and keeps its catalog user, its
+    * grants and its token, as on a REST catalog.
+    */
+  private val catalogAccess = new RecordingCatalogAccess()
+
+  /** The executions no create made a namespace for, whose namespaces the suite made. */
+  private val madeNamespaces = new ConcurrentLinkedQueue[Long]()
 
   private val owner: User = {
     val user = new User
@@ -217,8 +225,9 @@ class ExecutionClosingJobSpec
 
   override protected def afterAll(): Unit =
     try {
-      madeLogs.asScala.foreach(uri => Try(ExecutionLogStore.drop(uri)))
-      madeTables.asScala.foreach(uri => Try(DocumentFactory.openDocument(uri)._1.clear()))
+      (madeNamespaces.asScala.toSet ++ catalogAccess.opened.keySet).foreach { eid =>
+        Try(TestUtils.dropExecutionNamespace(eid))
+      }
     } finally {
       closeConnectionPool()
       super.afterAll()
@@ -333,7 +342,8 @@ class ExecutionClosingJobSpec
       override def load(wid: Long, uid: Int) = None
     },
     background = _ => (),
-    expiry = new NotingExpiry()
+    expiry = new NotingExpiry(),
+    access = catalogAccess
   )
 
   private val requestUri = new URI("http://texera.example:4200/api/executions")
@@ -402,10 +412,16 @@ class ExecutionClosingJobSpec
     record(eid.longValue())
   }
 
-  /** Makes the log of `execution`, as its unit does when it starts the run: no row, a first beat. */
+  /**
+    * Makes the log of `execution`, as its unit does when it starts the run: no row, a first beat.
+    * The namespace of one no create made, as a row with no plan is, is made first.
+    */
   private def withLog(execution: ExecutionRecord): ExecutionRecord = {
+    if (!catalogAccess.opened.contains(execution.eid)) {
+      TestUtils.makeExecutionNamespace(execution.eid, execution.warehouse)
+      madeNamespaces.add(execution.eid)
+    }
     ExecutionLogStore.create(execution.logUri, execution.startingTimeMs + 1000L, beatEveryMs)
-    madeLogs.add(execution.logUri)
     execution
   }
 
@@ -462,7 +478,6 @@ class ExecutionClosingJobSpec
     val schema = Schema().add("line", AttributeType.STRING)
     val document =
       DocumentFactory.createDocument(uri, schema).asInstanceOf[VirtualDocument[Tuple]]
-    madeTables.add(uri)
     val writer = document.writer(UUID.randomUUID().toString)
     writer.open()
     (1 to rows).foreach(line => writer.putOne(Tuple(schema, Array[Any](s"line $line"))))
@@ -480,7 +495,11 @@ class ExecutionClosingJobSpec
     * each pass by age. [[ExecutionExpirySpec]] owns what an expiry does.
     */
   private class NotingExpiry(replaced: (Int, Long) => Boolean = (_, _) => true)
-      extends ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ()) {
+      extends ExecutionExpiry(
+        warehousesEnabled = false,
+        deleteBinaries = _ => (),
+        access = catalogAccess
+      ) {
     val replacedBy = new ConcurrentLinkedQueue[(Int, Long)]()
     val passes = new ConcurrentLinkedQueue[PastAge]()
 
@@ -500,7 +519,8 @@ class ExecutionClosingJobSpec
       extends ExecutionExpiry(
         warehousesEnabled = false,
         deleteBinaries = _ => (),
-        now = () => clock.get()
+        now = () => clock.get(),
+        access = catalogAccess
       )
 
   /**
@@ -671,6 +691,31 @@ class ExecutionClosingJobSpec
     )
     // Its results are there to be read, and expired later.
     row(ranToTheEnd).getResultsExpiredAt shouldBe null
+    // What the executions' tokens can do stays: each unit still shows its run's results, and
+    // writes what the run recorded last.
+    Seq(ranToTheEnd, broke, stopped).foreach { closed =>
+      catalogAccess.management.revokedSinceMade(
+        ExecutionCatalogAccess.userOf(closed.eid)
+      ) shouldBe false
+    }
+  }
+
+  it should "leave what a token can do as it is when it closes an execution by a verdict" in {
+    val fixture = new Fixture()
+    val lost = running()
+    val neverStarted = created()
+    fixture.clock.set(neverStarted.startingTimeMs + 600000L)
+
+    fixture.tick(lostAfterTicks + 1)
+
+    closingOf(lost).flatMap(_.reason) shouldBe Some("unit lost")
+    closingOf(neverStarted).flatMap(_.reason) shouldBe Some("never started")
+    // The verdict may give way to an ending its unit writes later.
+    Seq(lost, neverStarted).foreach { closed =>
+      catalogAccess.management.revokedSinceMade(
+        ExecutionCatalogAccess.userOf(closed.eid)
+      ) shouldBe false
+    }
   }
 
   it should "leave a run that is under way open, tick after tick, while its unit beats" in {

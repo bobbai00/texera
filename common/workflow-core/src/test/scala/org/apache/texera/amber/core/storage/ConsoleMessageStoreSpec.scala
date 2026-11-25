@@ -24,7 +24,6 @@ import org.apache.iceberg.exceptions.{NotFoundException, ServiceUnavailableExcep
 import org.apache.texera.amber.core.storage.ConsoleMessageStore._
 import org.apache.texera.amber.core.tuple.AttributeType
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
-import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.common.tags.NonParallelTest
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
@@ -43,8 +42,11 @@ class ConsoleMessageStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdb
   // Executions below 100 are left to the specs that name one.
   private val nextExecutionId = new AtomicLong(100)
 
+  /** The console of a new execution, whose namespace is made. */
   private def freshConsoleUri(warehouse: Option[String] = None): URI =
-    consoleUri(workflowId, ExecutionIdentity(nextExecutionId.getAndIncrement()), warehouse)
+    withNamespace(
+      consoleUri(workflowId, ExecutionIdentity(nextExecutionId.getAndIncrement()), warehouse)
+    )
 
   private def createdConsole(warehouse: Option[String] = None): URI = {
     val uri = freshConsoleUri(warehouse)
@@ -107,9 +109,9 @@ class ConsoleMessageStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdb
       new URI(s"vfs:///wh/$warehouse/wid/12/eid/345/consolemessages")
   }
 
-  it should "resolve to a table named after the workflow and the execution, in the console namespace" in {
+  it should "be a table named after the workflow and the execution, in its namespace" in {
     Seq(None, Some(warehouse)).foreach { warehouse =>
-      val uri = consoleUri(workflowId, ExecutionIdentity(345), warehouse)
+      val uri = withNamespace(consoleUri(workflowId, ExecutionIdentity(345), warehouse))
       VFSURIFactory.decodeURI(uri).resourceType shouldBe VFSResourceType.CONSOLE_MESSAGES
 
       create(uri)
@@ -117,10 +119,7 @@ class ConsoleMessageStoreSpec extends AnyFlatSpec with Matchers with EmbeddedJdb
       IcebergCatalogInstance
         .getInstance(warehouse)
         .tableExists(
-          TableIdentifier.of(
-            StorageConfig.icebergTableConsoleMessagesNamespace,
-            "wid_12_eid_345_consolemessages"
-          )
+          TableIdentifier.of("execution-345", "wid_12_eid_345_consolemessages")
         ) shouldBe true
     }
   }

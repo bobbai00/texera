@@ -614,7 +614,8 @@ class WorkflowResource(expiry: ExecutionExpiry) {
   /**
     * Deletes workflows from the database, with everything their executions keep in the lake
     * ([[ExecutionExpiry.dropAll]]), which goes before the rows that find it do. An execution
-    * that is still open goes like any other: its unit finds its tables gone, and its run fails.
+    * that is still open goes like any other: its unit finds its namespace gone and its token of
+    * no use, and its run fails.
     *
     * @param workflowIDs The IDs of workflows to delete
     * @param sessionUser Current authenticated user

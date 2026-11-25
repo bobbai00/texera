@@ -81,6 +81,10 @@ class WorkflowWorker(
     workerConfig: WorkerConfig,
     replayInitialization: WorkerReplayInitialization
 ) extends WorkflowActor(replayInitialization.faultToleranceConfOpt, workerConfig.workerId) {
+  // What the worker asks the lake's catalog about its execution carries the execution's token,
+  // in whichever JVM of the computing unit the worker runs.
+  workerConfig.holdCatalogToken()
+
   val inputQueue: LinkedBlockingQueue[DPInputQueueElement] =
     new LinkedBlockingQueue()
   // Internal inputQueue is passed to dp.InputManager because input port materialization

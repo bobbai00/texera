@@ -20,6 +20,7 @@
 package org.apache.texera.service.resource
 
 import com.fasterxml.jackson.databind.node.ObjectNode
+import com.typesafe.scalalogging.LazyLogging
 import io.dropwizard.auth.Auth
 import jakarta.annotation.security.RolesAllowed
 import jakarta.ws.rs.core.MediaType
@@ -34,6 +35,10 @@ import jakarta.ws.rs.{
   Produces,
   QueryParam,
   ServiceUnavailableException
+}
+import org.apache.iceberg.exceptions.{
+  ForbiddenException => CatalogForbiddenException,
+  NotAuthorizedException => CatalogNotAuthorizedException
 }
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.storage.{
@@ -96,7 +101,7 @@ object ResultResource {
 @Path("/results")
 @Produces(Array(MediaType.APPLICATION_JSON))
 @RolesAllowed(Array("REGULAR", "ADMIN"))
-class ResultResource {
+class ResultResource extends LazyLogging {
 
   /**
     * The caller's own latest finished execution of a workflow: the newest the Dashboard service
@@ -260,6 +265,11 @@ class ResultResource {
       )
       .getOrElse(throw new NotFoundException(s"no result for operator $operatorId, port $port"))
 
+  /**
+    * Opens a stored result. A catalog that refuses this service, by not accepting its token or by
+    * not letting it read the table, is answered as the service being unavailable: the deployment
+    * is set up wrong, and no caller can work around it.
+    */
   private def openResult(uri: URI, operatorId: String): (VirtualDocument[Tuple], Schema) =
     try {
       WarehouseReadGuard.assertReadable(uri)
@@ -267,6 +277,11 @@ class ResultResource {
       (document._1.asInstanceOf[VirtualDocument[Tuple]], document._2.get)
     } catch {
       case e: WarehouseUnavailableException => throw new ServiceUnavailableException(e.getMessage)
+      case e @ (_: CatalogNotAuthorizedException | _: CatalogForbiddenException) =>
+        logger.warn(s"the catalog refused to open the result at $uri", e)
+        throw new ServiceUnavailableException(
+          s"the result of operator $operatorId cannot be read: the catalog refused this service"
+        )
       case _: DocumentNotFoundException =>
         throw new NotFoundException(s"the result of operator $operatorId is no longer stored")
     }

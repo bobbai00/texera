@@ -19,10 +19,13 @@
 
 package org.apache.texera.web.resource.dashboard.file
 
+import org.apache.iceberg.catalog.{Namespace, SupportsNamespaces}
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
   ExecutionLogStore,
+  ExecutionNamespace,
   ExecutionTables,
+  IcebergCatalogInstance,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
@@ -33,6 +36,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.auth.SessionUser
 import org.apache.texera.dao.MockTexeraDB
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -56,7 +60,11 @@ import org.apache.texera.web.resource.dashboard.user.workflow.WorkflowResource.{
   WorkflowWithPrivilege
 }
 import org.apache.texera.web.resource.dashboard.{DashboardResource, FulltextSearchQueryUtils}
-import org.apache.texera.web.service.execution.ExecutionExpiry
+import org.apache.texera.web.service.execution.{
+  ExecutionCatalogAccess,
+  ExecutionExpiry,
+  RecordingCatalogAccess
+}
 import org.jooq.Condition
 import org.jooq.impl.DSL.noCondition
 import org.scalamock.scalatest.MockFactory
@@ -172,10 +180,17 @@ class WorkflowResourceSpec
   /** The executions whose large binaries a delete would have deleted: none is, in this suite. */
   private val binariesDeletedFor = new ConcurrentLinkedQueue[Long]()
 
+  /**
+    * What a delete makes and drops of the executions' namespaces, in the catalog the build's
+    * tests use, with what it ends of their tokens kept, as on a REST catalog.
+    */
+  private val catalogAccess = new RecordingCatalogAccess()
+
   /** An expiry whose lake calls are the stores', and which deletes no large binary. */
   private val expiry = new ExecutionExpiry(
     warehousesEnabled = false,
-    deleteBinaries = eid => binariesDeletedFor.add(eid)
+    deleteBinaries = eid => binariesDeletedFor.add(eid),
+    access = catalogAccess
   )
 
   private val workflowResource: WorkflowResource = {
@@ -1303,9 +1318,9 @@ class WorkflowResourceSpec
   }
 
   /**
-    * An execution of workflow `wid` with a log table and the result table of a port; its id is
-    * given, so the tables' names are this suite's own. It is open, unless it is to be `closed`.
-    * Returns its tables.
+    * An execution of workflow `wid` with a log table and the result table of a port, in its
+    * namespace, as the Dashboard service makes it; its id is given, so the namespace is this
+    * suite's own. It is open, unless it is to be `closed`. Returns its tables.
     */
   private def executionWithTables(wid: Integer, eid: Int, closed: Boolean = false): Seq[URI] = {
     getDSLContext
@@ -1322,6 +1337,7 @@ class WorkflowResourceSpec
       .execute()
     val (workflowId, executionId) =
       (WorkflowIdentity(wid.longValue()), ExecutionIdentity(eid.toLong))
+    TestUtils.makeExecutionNamespace(eid.toLong)
     val log = ExecutionLogStore.logUri(workflowId, executionId, None)
     ExecutionLogStore.create(log, System.currentTimeMillis(), 30000L)
     val result = VFSURIFactory.resultURI(
@@ -1337,6 +1353,16 @@ class WorkflowResourceSpec
 
   private def hasTable(uri: URI): Boolean = ExecutionTables.exists(uri)
 
+  private def hasNamespace(eid: Long): Boolean =
+    IcebergCatalogInstance
+      .getInstance()
+      .asInstanceOf[SupportsNamespaces]
+      .namespaceExists(Namespace.of(ExecutionNamespace.of(eid)))
+
+  /** Whether what execution `eid`'s token can do was ended. */
+  private def revoked(eid: Long): Boolean =
+    catalogAccess.management.deleted.contains(ExecutionCatalogAccess.userOf(eid))
+
   it should "drop every table of the deleted workflow's executions, open ones included, and no other's" in {
     val wid = seedWorkflow(sessionUser1, "tables-wf").workflow.getWid
     val otherWid = seedWorkflow(sessionUser1, "tables-other-wf").workflow.getWid
@@ -1349,6 +1375,12 @@ class WorkflowResourceSpec
 
       deleted.foreach(uri => assert(!hasTable(uri), s"$uri was not dropped"))
       kept.foreach(uri => assert(hasTable(uri), s"$uri was dropped"))
+      // Their namespaces go with them, and so does what their tokens could do.
+      Seq(951001L, 951002L).foreach { eid =>
+        assert(!hasNamespace(eid), s"the namespace of execution $eid was not dropped")
+        assert(revoked(eid), s"the token of execution $eid still works")
+      }
+      assert(hasNamespace(951003L) && !revoked(951003L))
       assert(binariesDeletedFor.asScala.toSet == Set(951001L, 951002L))
       assert(workflowNamesOf(sessionUser1) == List("tables-other-wf"))
     } finally expiry.dropAll(951003L)
@@ -1385,7 +1417,11 @@ class WorkflowResourceSpec
   it should "keep the workflow, to find its tables by, when a table cannot be dropped" in {
     val lakeDown = new IllegalStateException("the lake is out of reach")
     val failing = new WorkflowResource(
-      new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => throw lakeDown)
+      new ExecutionExpiry(
+        warehousesEnabled = false,
+        deleteBinaries = _ => throw lakeDown,
+        access = catalogAccess
+      )
     )
     val wid = seedWorkflow(sessionUser1, "tables-undroppable-wf").workflow.getWid
     executionWithTables(wid, 951006, closed = true)

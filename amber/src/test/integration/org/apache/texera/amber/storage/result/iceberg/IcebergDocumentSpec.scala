@@ -22,7 +22,12 @@ package org.apache.texera.amber.storage.result.iceberg
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.storage.model.{VirtualDocument, VirtualDocumentSpec}
-import org.apache.texera.amber.core.storage.{DocumentFactory, IcebergCatalogInstance, VFSURIFactory}
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionNamespace,
+  IcebergCatalogInstance,
+  VFSURIFactory
+}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -31,12 +36,13 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.tags.IntegrationTest
-import org.apache.iceberg.catalog.Catalog
+import org.apache.iceberg.catalog.{Catalog, TableIdentifier}
 import org.apache.iceberg.exceptions.NoSuchTableException
 import org.scalatest.BeforeAndAfterAll
 
-import java.lang.reflect.{InvocationHandler, InvocationTargetException, Method, Proxy}
+import java.lang.reflect.{InvocationHandler, Method, Proxy}
 import java.net.URI
 import java.sql.Timestamp
 import java.util.UUID
@@ -51,6 +57,8 @@ class IcebergDocumentSpec extends VirtualDocumentSpec[Tuple] with BeforeAndAfter
 
   override def beforeAll(): Unit = {
     super.beforeAll()
+    // The namespace of the execution the documents are of, as the Dashboard service makes it.
+    TestUtils.makeExecutionNamespace(0L)
 
     // Initialize Amber Schema with all possible attribute types
     amberSchema = Schema(
@@ -169,21 +177,13 @@ class IcebergDocumentSpec extends VirtualDocumentSpec[Tuple] with BeforeAndAfter
     assert(!DocumentFactory.documentExists(statsUri))
   }
 
-  it should "throw IllegalArgumentException for resolveNamespace on an unmapped resource type" in {
-    // `resolveNamespace` is private and its `case _ =>` is unreachable from any
-    // well-formed VFS URI (VFSURIFactory.decodeURI validates resource types).
-    // Exercise the defensive branch by reflecting on the method and passing
-    // null — Scala pattern matches fall through to the wildcard for null
-    // scrutinees.
-    val method = DocumentFactory.getClass.getDeclaredMethod(
-      "resolveNamespace",
-      classOf[Enumeration#Value]
+  it should "make a document's table in the namespace of its URI's execution" in {
+    val table = uri.getPath.stripPrefix("/").replace("/", "_")
+    assert(
+      IcebergCatalogInstance
+        .getInstance()
+        .tableExists(TableIdentifier.of(ExecutionNamespace.of(0L), table))
     )
-    method.setAccessible(true)
-    val wrapped = intercept[InvocationTargetException] {
-      method.invoke(DocumentFactory, null)
-    }
-    assert(wrapped.getCause.isInstanceOf[IllegalArgumentException])
   }
 
   it should "round trip materialized state documents" in {

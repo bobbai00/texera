@@ -29,11 +29,11 @@ import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
 import java.net.URI
 
 /**
-  * The tables an execution keeps in the lake. Each is one Iceberg table in the warehouse the
-  * execution writes into, found without a registry: its log, statistics and console at URIs its
-  * ids name ([[ownTables]]), and the result and the state of each output port it stored, found
-  * by their names ([[portTables]]), since every table of an execution is named after its
-  * workflow and the execution.
+  * The tables an execution keeps in the lake. Each is one Iceberg table in the execution's own
+  * namespace ([[ExecutionNamespace]]) in the warehouse the execution writes into, found without
+  * a registry: its log, statistics and console at URIs its ids name ([[ownTables]]), and the
+  * result and the state of each output port it stored, found by their names ([[portTables]]),
+  * since every table of an execution is named after its workflow and the execution.
   *
   * The stores of the three own tables ([[ExecutionLogStore]], [[RuntimeStatisticsStore]],
   * [[ConsoleMessageStore]]) share these rules:
@@ -54,10 +54,6 @@ object ExecutionTables {
   val ProducedKinds: Seq[VFSResourceType.Value] =
     Seq(VFSResourceType.RESULT, VFSResourceType.STATE, VFSResourceType.CONSOLE_MESSAGES)
 
-  val AllKinds: Seq[VFSResourceType.Value] =
-    ProducedKinds ++
-      Seq(VFSResourceType.RUNTIME_STATISTICS, VFSResourceType.EXECUTION_LOG)
-
   /** The execution's three own tables. A `warehouse` of None is the default warehouse. */
   def ownTables(
       wid: WorkflowIdentity,
@@ -73,7 +69,7 @@ object ExecutionTables {
   /**
     * The result table and the state table of every output port execution `eid` of workflow `wid`
     * stored, found by their names: a run stores only some of its ports, and the tables say which.
-    * It lists the whole namespace of each of the two kinds to find them.
+    * It lists the execution's namespace to find them.
     */
   def portTables(
       wid: WorkflowIdentity,
@@ -91,8 +87,8 @@ object ExecutionTables {
 
   /**
     * Drops the execution's tables of `kinds`, going by their names: every table of an execution
-    * is named after its workflow and the execution. It lists the whole namespace of each kind to
-    * find them.
+    * is named after its workflow and the execution, and its kind. It lists the execution's
+    * namespace to find them, and leaves the namespace, with the tables of the other kinds.
     *
     * @return the names of the tables dropped
     */
@@ -102,6 +98,16 @@ object ExecutionTables {
       warehouse: Option[String],
       kinds: Seq[VFSResourceType.Value]
   ): Seq[String] = kinds.flatMap(DocumentFactory.dropTablesOf(wid, eid, warehouse, _))
+
+  /**
+    * Drops the namespace of execution `eid` in `warehouse` with every table in it, whatever its
+    * name: what deleting the execution leaves of it in the lake. Each table is purged, its data
+    * files and all. Nothing happens for an execution with no namespace.
+    *
+    * @return the names of the tables dropped
+    */
+  def dropNamespace(eid: Long, warehouse: Option[String]): Seq[String] =
+    DocumentFactory.dropNamespace(eid, warehouse)
 
   /**
     * Whether `port` is output port `portId` of logical operator `operatorId` as the workflow's

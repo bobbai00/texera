@@ -25,7 +25,14 @@ import com.twitter.util.{Await, Duration, Promise, Return, Throw, Try}
 import org.apache.pekko.actor.ActorSystem
 import org.apache.texera.amber.core.executor.OpExecInitInfo
 import org.apache.texera.amber.core.state.StateReferencing
-import org.apache.texera.amber.core.storage.{DocumentFactory, InputLinker, VFSURIFactory}
+import org.apache.texera.amber.core.storage.{
+  DocumentFactory,
+  ExecutionNamespace,
+  ExecutionTables,
+  IcebergCatalogInstance,
+  InputLinker,
+  VFSURIFactory
+}
 import org.apache.texera.amber.core.storage.model.VirtualDocument
 import org.apache.texera.amber.core.tuple.Tuple
 import org.apache.texera.amber.core.virtualidentity.{
@@ -64,6 +71,7 @@ import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAg
 }
 import org.apache.texera.amber.engine.common.client.AmberClient
 import org.apache.texera.amber.operator.{FixtureInputs, LogicalOp, TestOperators}
+import org.apache.texera.amber.util.IcebergUtil
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.common.compiler.model.LogicalPlanPojo
 import org.apache.texera.web.service.WorkflowExecutionService
@@ -99,6 +107,25 @@ object TestUtils {
       executionId = ExecutionIdentity(id.toLong),
       workflowSettings = workflowSettings
     )
+
+  /**
+    * Makes the namespace of execution `eid` in `warehouse` (None: the shared warehouse), as the
+    * Dashboard service makes it when it creates the execution: a run's engine, its record and
+    * its Python workers write their tables there, and make no namespace. Making it again does
+    * nothing.
+    */
+  def makeExecutionNamespace(eid: Long, warehouse: Option[String] = None): Unit =
+    IcebergUtil.createNamespace(
+      IcebergCatalogInstance.getInstance(warehouse),
+      ExecutionNamespace.of(eid)
+    )
+
+  /**
+    * Drops the namespace of execution `eid` in `warehouse`, with every table in it, as deleting
+    * the execution does. One that is not there is left as it is.
+    */
+  def dropExecutionNamespace(eid: Long, warehouse: Option[String] = None): Unit =
+    ExecutionTables.dropNamespace(eid, warehouse)
 
   /** The one Python environment the user of the fixtures keeps, under the name `ml`. */
   val fixtureEnvironment: PythonEnvironment = PythonEnvironment("ml", Seq("tabulate==0.9.0"))
@@ -297,7 +324,8 @@ object TestUtils {
     * results via `readMaterializedResults`. A FatalError aborts the run and is
     * surfaced as the exception from the completion await. Specs that drive the
     * run differently (e.g. a pause/resume flow) read results directly inside
-    * their own completion callback instead.
+    * their own completion callback instead. The run's execution has its namespace
+    * made first ([[makeExecutionNamespace]]).
     */
   def runWorkflowAndReadResults[T](
       system: ActorSystem,
@@ -306,6 +334,7 @@ object TestUtils {
       extract: VirtualDocument[Tuple] => T,
       completionTimeout: Duration = Duration.fromMinutes(1)
   ): Map[OperatorIdentity, T] = {
+    makeExecutionNamespace(workflow.context.executionId.id, workflow.context.warehouse)
     // The Promise carries the result so completing the run and handing back the
     // value are atomic. Every terminal path uses `updateIfEmpty`, so a second
     // event (a late FatalError after COMPLETED, or a repeated state update)
@@ -499,6 +528,7 @@ object TestUtils {
       newOpExecInitInfo: OpExecInitInfo
   ): Map[OperatorIdentity, List[Tuple]] = {
     val workflow = buildWorkflow(operators, links, ctx)
+    makeExecutionNamespace(ctx.executionId.id, ctx.warehouse)
     val client = new AmberClient(
       system,
       workflow.context,

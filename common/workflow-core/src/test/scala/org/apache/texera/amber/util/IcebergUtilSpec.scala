@@ -19,12 +19,13 @@
 
 package org.apache.texera.amber.util
 
-import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import org.apache.texera.amber.core.tuple.{AttributeType, LargeBinary, Schema, Tuple}
 import org.apache.texera.amber.util.IcebergUtil.toIcebergSchema
+import org.apache.texera.amber.util.RestCatalogStub.withRestCatalogAt
 import org.apache.texera.common.config.StorageConfig
 import org.apache.hadoop.fs.FileSystem
-import org.apache.iceberg.catalog.{Catalog, TableIdentifier}
+import org.apache.iceberg.CatalogProperties
+import org.apache.iceberg.catalog.{Catalog, Namespace, TableIdentifier}
 import org.apache.iceberg.data.GenericRecord
 import org.apache.iceberg.exceptions.{
   AlreadyExistsException,
@@ -32,19 +33,21 @@ import org.apache.iceberg.exceptions.{
   NoSuchTableException,
   RESTException
 }
+import org.apache.iceberg.hadoop.{HadoopCatalog, HadoopFileIO}
+import org.apache.iceberg.rest.auth.AuthProperties
 import org.apache.iceberg.types.Types
 import org.apache.iceberg.{Schema => IcebergSchema}
 import org.scalamock.scalatest.MockFactory
 import org.scalatest.flatspec.AnyFlatSpec
 
-import java.net.{InetAddress, InetSocketAddress, SocketTimeoutException, URI}
+import java.net.{SocketTimeoutException, URI}
 import java.nio.ByteBuffer
-import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.sql.Timestamp
 import java.time.{LocalDateTime, ZoneId}
 import java.util.TimeZone
-import java.util.concurrent.{CountDownLatch, Executors, TimeUnit}
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch, TimeUnit}
 import scala.annotation.tailrec
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, ExecutionContext, Future}
@@ -373,6 +376,7 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
     // On Windows hosts without a winutils.exe installation, this used to fail with
     // "Hadoop bin directory does not exist": Hadoop's default local file system
     // shells out to winutils for chmod on every file/directory creation.
+    IcebergUtil.createNamespace(catalog, "test_namespace")
     IcebergUtil.createTable(
       catalog,
       "test_namespace",
@@ -389,17 +393,29 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
     assert(IcebergUtil.loadTableMetadata(catalog, "test_namespace", "missing_table").isEmpty)
   }
 
+  it should "make a namespace, and leave one that is there as it is" in {
+    val catalog =
+      IcebergUtil.createHadoopCatalog("namespace_test", Files.createTempDirectory("iceberg-ns"))
+    IcebergUtil.createNamespace(catalog, "execution-7")
+    IcebergUtil.createTable(
+      catalog,
+      "execution-7",
+      "test_table",
+      icebergSchema,
+      overrideIfExists = false
+    )
+
+    IcebergUtil.createNamespace(catalog, "execution-7")
+
+    assert(catalog.namespaceExists(Namespace.of("execution-7")))
+    assert(catalog.tableExists(TableIdentifier.of("execution-7", "test_table")))
+  }
+
   it should "reject catalogs that do not support namespaces" in {
     val catalog = mock[Catalog]
 
     val exception = intercept[IllegalArgumentException] {
-      IcebergUtil.createTable(
-        catalog,
-        "test_namespace",
-        "test_table",
-        icebergSchema,
-        overrideIfExists = true
-      )
+      IcebergUtil.createNamespace(catalog, "test_namespace")
     }
 
     assert(
@@ -408,12 +424,42 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
     )
   }
 
+  it should "make no namespace when it makes a table" in {
+    // A computing unit's token may not make a namespace: the Dashboard service makes it.
+    val made = new AtomicInteger()
+    val catalog = new HadoopCatalog() {
+      override def createNamespace(
+          namespace: Namespace,
+          meta: java.util.Map[String, String]
+      ): Unit = {
+        made.incrementAndGet()
+        super.createNamespace(namespace, meta)
+      }
+    }
+    catalog.setConf(IcebergUtil.newLocalHadoopConf())
+    catalog.initialize(
+      "counting_test",
+      Map(
+        "warehouse" -> Files.createTempDirectory("iceberg-counting").toString,
+        CatalogProperties.FILE_IO_IMPL -> classOf[HadoopFileIO].getName
+      ).asJava
+    )
+    IcebergUtil.createNamespace(catalog, "execution-8")
+
+    Seq(false, true).foreach { overrideIfExists =>
+      IcebergUtil.createTable(catalog, "execution-8", "test_table", icebergSchema, overrideIfExists)
+    }
+
+    assert(made.get() == 1, "only createNamespace makes the namespace")
+  }
+
   it should "drop and recreate an existing table when override is enabled" in {
     val warehouse = Files.createTempDirectory("iceberg-override-warehouse")
     val catalog = IcebergUtil.createHadoopCatalog("override_test", warehouse)
     val originalSchema = IcebergUtil.toIcebergSchema(Schema().add("id", AttributeType.INTEGER))
     val replacementSchema = IcebergUtil.toIcebergSchema(Schema().add("value", AttributeType.STRING))
 
+    IcebergUtil.createNamespace(catalog, "test_namespace")
     IcebergUtil.createTable(
       catalog,
       "test_namespace",
@@ -444,6 +490,7 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
     val originalSchema = IcebergUtil.toIcebergSchema(Schema().add("id", AttributeType.INTEGER))
     val replacementSchema = IcebergUtil.toIcebergSchema(Schema().add("value", AttributeType.STRING))
 
+    IcebergUtil.createNamespace(catalog, "test_namespace")
     IcebergUtil.createTable(
       catalog,
       "test_namespace",
@@ -502,23 +549,6 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
     }
   }
 
-  /**
-    * Runs `body` against a REST catalog on this machine that answers every request as `answer`
-    * does, and is given the catalog's URI.
-    */
-  private def withRestCatalogAt[T](answer: HttpExchange => Unit)(body: String => T): T = {
-    val server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress, 0), 0)
-    val threads = Executors.newCachedThreadPool()
-    server.setExecutor(threads)
-    server.createContext("/", (exchange: HttpExchange) => answer(exchange))
-    server.start()
-    try body(s"http://127.0.0.1:${server.getAddress.getPort}/catalog")
-    finally {
-      server.stop(0)
-      threads.shutdownNow()
-    }
-  }
-
   @tailrec
   private def rootCauseOf(failure: Throwable): Throwable =
     if (failure.getCause == null) failure else rootCauseOf(failure.getCause)
@@ -546,13 +576,7 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
 
   it should "give the REST catalog's client the configured limits for a connection and for an answer" in {
     // A catalog that answers the one request a client makes to initialize: its configuration.
-    val config = """{"defaults": {}, "overrides": {}}""".getBytes(StandardCharsets.UTF_8)
-    withRestCatalogAt { exchange =>
-      exchange.getResponseHeaders.add("Content-Type", "application/json")
-      exchange.sendResponseHeaders(200, config.length.toLong)
-      exchange.getResponseBody.write(config)
-      exchange.close()
-    } { uri =>
+    withRestCatalogAt(RestCatalogStub.answer(_, RestCatalogStub.Configuration)) { uri =>
       val catalog = IcebergUtil.createRestCatalog("test", "a-warehouse", uri)
       try {
         val properties = catalog.properties()
@@ -566,5 +590,28 @@ class IcebergUtilSpec extends AnyFlatSpec with MockFactory {
         )
       } finally catalog.close()
     }
+  }
+
+  it should "have the REST catalog's client authenticate through CatalogTokenAuthManager" in {
+    val authorizations = new ConcurrentLinkedQueue[Option[String]]()
+    withRestCatalogAt { exchange =>
+      authorizations.add(Option(exchange.getRequestHeaders.getFirst("Authorization")))
+      RestCatalogStub.answer(exchange, RestCatalogStub.Configuration)
+    } { uri =>
+      Seq(None -> null, Some(5L) -> "5").foreach {
+        case (execution, named) =>
+          val catalog =
+            IcebergUtil.createRestCatalog("test", "a-warehouse", uri, execution = execution)
+          try {
+            val properties = catalog.properties()
+            assert(
+              properties.get(AuthProperties.AUTH_TYPE) == classOf[CatalogTokenAuthManager].getName
+            )
+            assert(properties.get(CatalogTokenAuthManager.ExecutionProperty) == named)
+          } finally catalog.close()
+      }
+    }
+    // This JVM is anonymous to the catalog, so its requests carry no token.
+    assert(authorizations.asScala.toSeq == Seq(None, None))
   }
 }

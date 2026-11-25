@@ -278,8 +278,12 @@ class PythonEnvironmentIntegrationSpec
       createAmberRuntime = new AmberClient(system, _, _, _, _)
     )
 
-    /** Starts the run, and answers what it ended as. */
+    /**
+      * Starts the run, in the namespace of its execution, which is made first as the Dashboard
+      * service makes it, and answers what it ended as.
+      */
     def end(): ExecutionMetadataStore = {
+      TestUtils.makeExecutionNamespace(context.executionId.id, context.warehouse)
       service.startPlan(executionPlan, startedBy = specId) shouldBe None
       eventually(patience, interval(Span(200, Millis))) {
         Set(COMPLETED, FAILED, KILLED, TERMINATED) should contain(

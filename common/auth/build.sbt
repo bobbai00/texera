@@ -55,6 +55,9 @@ libraryDependencies ++= Seq(
   "com.typesafe" % "config" % "1.4.6",                                  // config reader
   "com.typesafe.scala-logging" %% "scala-logging" % "3.9.5",            // for LazyLogging
   "org.bitbucket.b_c" % "jose4j" % "0.9.6",                             // for jwt parser
+  // for CatalogTokens' key derivation; the version is the one the root build.sbt pins
+  // (bouncyCastleVersion, which this file cannot see)
+  "org.bouncycastle" % "bcprov-jdk18on" % "1.84",
   "jakarta.ws.rs" % "jakarta.ws.rs-api" % "3.0.0",                      // for JwtAuthFilter
   "jakarta.annotation" % "jakarta.annotation-api" % "2.1.1",            // for @Priority on JwtAuthFilter
   "jakarta.servlet" % "jakarta.servlet-api" % "5.0.0" % "provided",    // for RequestLoggingFilter

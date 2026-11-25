@@ -224,15 +224,21 @@ def create_rest_catalog(
     catalog_name: str,
     warehouse_name: str,
     rest_uri: str,
+    token: str = "",
 ) -> Catalog:
     """
     Creates a REST catalog instance by connecting to a REST endpoint.
     - The warehouse_name parameter specifies the warehouse identifier.
     - S3 settings (endpoint, region, credentials) are supplied by the REST
       catalog server at runtime.
+    - A non-empty `token` is sent as `Authorization: Bearer <token>` with every
+      catalog request, and with every request to sign an S3 request for the
+      catalog's tables. An empty one sets no token, for a catalog that lets
+      every request through.
     :param catalog_name: the name of the catalog.
     :param warehouse_name: the warehouse identifier.
     :param rest_uri: the URI of the REST catalog endpoint.
+    :param token: the token the catalog's requests carry; empty for none.
     :return: a Catalog instance (REST catalog).
     """
     # PyIceberg caches filesystems per FileIO thread. The additional global S3
@@ -241,14 +247,29 @@ def create_rest_catalog(
     # No Windows-local normalization here (unlike create_postgres_catalog):
     # `warehouse_name` is a logical warehouse identifier resolved by the REST
     # server, whose I/O goes through S3FileIO, not the local filesystem.
-    return load_catalog(
-        catalog_name,
-        **{
-            "type": "rest",
-            "uri": rest_uri,
-            "warehouse": warehouse_name,
-        },
-    )
+    properties = {
+        "type": "rest",
+        "uri": rest_uri,
+        "warehouse": warehouse_name,
+    }
+    # PyIceberg sends the `token` property on the catalog's own requests, and
+    # hands the catalog's auth manager to the FileIO of every table it loads,
+    # whose S3V4RestSigner sends the same header on each signing request.
+    if token:
+        properties["token"] = token
+    return load_catalog(catalog_name, **properties)
+
+
+def create_namespace(catalog: Catalog, namespace: str) -> None:
+    """
+    Creates a namespace, unless it already exists. The engine never creates one:
+    the Dashboard Service makes the namespace of each execution before the
+    execution starts (see `execution_namespace`), so tests that stand in for it
+    call this. Mirrors IcebergUtil.createNamespace (Scala).
+    :param catalog: The Iceberg catalog to create the namespace in.
+    :param namespace: The name of the namespace.
+    """
+    catalog.create_namespace_if_not_exists(namespace)
 
 
 def create_table(
@@ -260,6 +281,8 @@ def create_table(
 ) -> Table:
     """
     Creates a new Iceberg table with the specified schema and properties.
+    - The namespace must exist: the engine never creates one (see
+    `create_namespace`), and an execution's token may not.
     - Drops the existing table if `override_if_exists` is true and the table already
     exists.
     - Creates an unpartitioned table with custom commit retry properties.
@@ -274,10 +297,10 @@ def create_table(
 
     identifier = f"{table_namespace}.{table_name}"
 
-    catalog.create_namespace_if_not_exists(table_namespace)
-
     if catalog.table_exists(identifier) and override_if_exists:
-        catalog.drop_table(identifier)
+        # Purged, as every drop is: the files of a table no catalog names are never
+        # deleted.
+        catalog.purge_table(identifier)
 
     table = catalog.create_table(
         identifier=identifier,

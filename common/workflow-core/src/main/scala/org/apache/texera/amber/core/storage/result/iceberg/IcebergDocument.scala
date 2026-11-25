@@ -60,6 +60,8 @@ object Constants {
   * @param serde          function to serialize T into an Iceberg Record.
   * @param deserde        function to deserialize an Iceberg Record into T.
   * @param warehouse      the warehouse whose catalog backs this table; `None` uses the configured default.
+  * @param execution      the execution the table is of, whose token the requests about it carry
+  *                       (see `CatalogIdentity`); `None` for a table of no execution.
   * @tparam T type of the data items stored in the Iceberg table.
   */
 private[storage] class IcebergDocument[T >: Null <: AnyRef](
@@ -68,7 +70,8 @@ private[storage] class IcebergDocument[T >: Null <: AnyRef](
     val tableSchema: org.apache.iceberg.Schema,
     val serde: (org.apache.iceberg.Schema, T) => Record,
     val deserde: (org.apache.iceberg.Schema, Record) => T,
-    val warehouse: Option[String] = None
+    val warehouse: Option[String] = None,
+    val execution: Option[Long] = None
 ) extends VirtualDocument[T]
     with OnIceberg
     with LazyLogging {
@@ -78,7 +81,7 @@ private[storage] class IcebergDocument[T >: Null <: AnyRef](
   // Resolved per use, never held: the catalog cache is bounded and closes evicted
   // entries (#7290), so a pinned reference could outlive its catalog. A public def
   // (not a lazy val) also means a replaced/rebuilt catalog is picked up immediately.
-  def catalog: Catalog = IcebergCatalogInstance.getInstance(warehouse)
+  def catalog: Catalog = IcebergCatalogInstance.getInstance(warehouse, execution)
 
   /**
     * Returns the URI of the table location.
@@ -97,7 +100,8 @@ private[storage] class IcebergDocument[T >: Null <: AnyRef](
       // catalog even if the cache entry is replaced between them (#7290).
       val currentCatalog = catalog
       if (currentCatalog.tableExists(identifier)) {
-        currentCatalog.dropTable(identifier)
+        // Purged, as every drop is: the files of a table no catalog names are never deleted.
+        currentCatalog.dropTable(identifier, true)
       }
     }
 
@@ -144,6 +148,7 @@ private[storage] class IcebergDocument[T >: Null <: AnyRef](
     new IcebergTableWriter[T](
       writerIdentifier,
       warehouse,
+      execution,
       tableNamespace,
       tableName,
       tableSchema,

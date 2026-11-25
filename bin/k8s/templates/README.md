@@ -26,7 +26,7 @@ these subdirectories are purely organizational — they do not change rendering.
 
 | Folder | Contains | Renders when |
 |--------|----------|--------------|
-| `base/` | Resources every deployment needs: the Texera micro-service Deployments/Services, the Envoy Gateway + routes, Postgres/LakeFS/Lakekeeper wiring, the computing-unit pool, RBAC and namespaces. | Always. |
+| `base/` | Resources every deployment needs: the Texera micro-service Deployments/Services, the Envoy Gateway + routes, Postgres/LakeFS/Lakekeeper/OpenFGA wiring, the computing-unit pool, RBAC and namespaces. | Always. |
 | `on-prem/` | Resources only used by a self-hosted / local deployment, e.g. the in-cluster RustFS persistence. | Gated on the relevant on-prem value (e.g. `rustfs.enabled`). |
 | `aws/` | Resources only used on AWS/EKS, e.g. the external-S3 credentials Secret, the AWS NLB/EIP `EnvoyProxy`, and the autoscaler warm-pool placeholder. | Gated so they render to nothing off AWS (empty by default). |
 
@@ -42,8 +42,9 @@ base/
   file-service/
   gateway/                  # Envoy Gateway + routes + backends + security policy
   lakefs/
-  lakekeeper/
+  lakekeeper/               # the job that creates the warehouses' bucket
   litellm/
+  openfga/                  # Lakekeeper's grant store: Deployment + Service + NetworkPolicy
   postgresql/               # in-cluster Postgres PV/PVC + init scripts
   webserver/                # dashboard / webserver Deployment + Service
   workflow-compiling-service/

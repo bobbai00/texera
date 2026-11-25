@@ -96,6 +96,7 @@ import org.apache.texera.web.service.execution.{
   ExecutionCreator,
   ExecutionExpiry,
   FixtureCompilingService,
+  RecordingCatalogAccess,
   RecordingComputingUnits
 }
 import org.apache.texera.web.service.{WorkflowExecutionService, WorkflowService}
@@ -305,9 +306,10 @@ class SyncExecutionResourceSpec
       message
     )
 
-  /** Makes the console table of execution `eid`, holding `rows`. */
+  /** Makes the console table of execution `eid`, in its namespace, holding `rows`. */
   private def storeConsole(eid: Int, rows: ConsoleRow*): URI = {
     val uri = consoleUriOf(eid)
+    TestUtils.makeExecutionNamespace(eid.toLong)
     ConsoleMessageStore.create(uri)
     madeConsoles += uri
     ConsoleMessageStore.append(uri, rows)
@@ -355,6 +357,7 @@ class SyncExecutionResourceSpec
     */
   private def storeResult(opId: String, tuples: Seq[Tuple], schema: Schema = rowSchema): Unit = {
     val uri = resultUriOf(opId)
+    TestUtils.makeExecutionNamespace(resultEid.toLong)
     val writer = DocumentFactory
       .createDocument(uri, schema)
       .writer(opId)
@@ -1110,6 +1113,9 @@ class SyncExecutionResourceSpec
   /** The units' side of the Dashboard's create: each plan handed over, for the suite's services. */
   private val handedOver = new RecordingComputingUnits()
 
+  /** The Dashboard's access to the lake: each execution's namespace, and a token for it. */
+  private val catalogAccess = new RecordingCatalogAccess()
+
   /** The Dashboard's create, with the fixture bindings and no cost hints. */
   private object FixtureCreator
       extends ExecutionCreator(
@@ -1121,7 +1127,12 @@ class SyncExecutionResourceSpec
         costHints = NoHints,
         background = _.run(),
         // No large binary is deleted for what a create finds replaced.
-        expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
+        expiry = new ExecutionExpiry(
+          warehousesEnabled = false,
+          deleteBinaries = _ => (),
+          access = catalogAccess
+        ),
+        access = catalogAccess
       )
 
   /** The headers of a wait for user `uid`: all the route reads of its caller. */

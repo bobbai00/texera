@@ -22,6 +22,7 @@ package org.apache.texera.web.resource.dashboard.user.workflow
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.serialization.SerializationExtension
 import org.apache.pekko.testkit.TestKit
+import org.apache.iceberg.catalog.{Namespace, SupportsNamespaces}
 import org.apache.texera.amber.core.storage.model.BufferedItemWriter
 import org.apache.texera.amber.core.storage.{
   ConsoleMessageStore,
@@ -29,7 +30,9 @@ import org.apache.texera.amber.core.storage.{
   ExecutionLabel,
   ExecutionLogEntry,
   ExecutionLogStore,
+  ExecutionNamespace,
   ExecutionTables,
+  IcebergCatalogInstance,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore,
   VFSURIFactory,
@@ -74,9 +77,15 @@ import org.apache.texera.dao.jooq.generated.tables.pojos.{
 import org.apache.texera.amber.engine.architecture.logreplay.{ReplayDestination, ReplayLogRecord}
 import org.apache.texera.amber.engine.common.AmberRuntime
 import org.apache.texera.amber.engine.common.storage.VFSRecordStorage
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.web.model.http.request.result.{OperatorExportInfo, ResultExportRequest}
 import org.apache.texera.web.model.http.response.result.ResultExportResponse
-import org.apache.texera.web.service.execution.{ExecutionExpiry, OpenExecutionStatuses}
+import org.apache.texera.web.service.execution.{
+  ExecutionCatalogAccess,
+  ExecutionExpiry,
+  OpenExecutionStatuses,
+  RecordingCatalogAccess
+}
 import org.jose4j.jwt.JwtClaims
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, PrivateMethodTester}
@@ -99,6 +108,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 class WorkflowExecutionsResourceSpec
     extends AnyFlatSpec
@@ -216,9 +226,9 @@ class WorkflowExecutionsResourceSpec
       .execute()
   }
 
-  override protected def afterAll(): Unit = {
-    closeConnectionPool()
-  }
+  override protected def afterAll(): Unit =
+    try madeNamespaces.asScala.foreach(eid => Try(TestUtils.dropExecutionNamespace(eid)))
+    finally closeConnectionPool()
 
   // ─── helpers ──────────────────────────────────────────────────────────────
 
@@ -266,8 +276,21 @@ class WorkflowExecutionsResourceSpec
     execution.setCuid(cuid)
     execution.setWhid(whid)
     workflowExecutionsDao.insert(execution)
+    withNamespace(execution)
     // As stored: a time written through the DAO keeps whole seconds.
     workflowExecutionsDao.fetchOneByEid(execution.getEid)
+  }
+
+  /**
+    * The namespace of every execution the suite inserted, as the Dashboard service makes it at
+    * the create: the tables a case gives the execution are in it. Each is dropped after the
+    * suite, with what is left in it.
+    */
+  private val madeNamespaces = new ConcurrentLinkedQueue[Long]()
+
+  private def withNamespace(execution: WorkflowExecutions): Unit = {
+    TestUtils.makeExecutionNamespace(execution.getEid.longValue())
+    madeNamespaces.add(execution.getEid.longValue())
   }
 
   // An execution that is real, readable by testUser's session, and belongs to a
@@ -298,6 +321,7 @@ class WorkflowExecutionsResourceSpec
     execution.setName("foreign-execution")
     execution.setEnvironmentVersion("test-env-1.0")
     workflowExecutionsDao.insert(execution)
+    withNamespace(execution)
     execution
   }
 
@@ -388,11 +412,29 @@ class WorkflowExecutionsResourceSpec
   /** The executions whose large binaries a delete would have deleted: none is, in this suite. */
   private val binariesDeletedFor = new ConcurrentLinkedQueue[Long]()
 
+  /**
+    * What a delete drops of the executions' namespaces, in the catalog the build's tests use,
+    * with what it ends of their tokens kept, as on a REST catalog.
+    */
+  private val catalogAccess = new RecordingCatalogAccess()
+
   /** An expiry whose lake calls are the stores', and which deletes no large binary. */
   private val expiry = new ExecutionExpiry(
     warehousesEnabled = false,
-    deleteBinaries = eid => binariesDeletedFor.add(eid)
+    deleteBinaries = eid => binariesDeletedFor.add(eid),
+    access = catalogAccess
   )
+
+  private def hasNamespace(execution: WorkflowExecutions): Boolean =
+    IcebergCatalogInstance
+      .getInstance()
+      .asInstanceOf[SupportsNamespaces]
+      .namespaceExists(Namespace.of(ExecutionNamespace.of(execution.getEid.longValue())))
+
+  /** Whether what the token of `execution` can do was ended. */
+  private def revoked(execution: WorkflowExecutions): Boolean =
+    catalogAccess.management.deleted
+      .contains(ExecutionCatalogAccess.userOf(execution.getEid.longValue()))
 
   /** An execution that is closed, as one that a delete takes is. */
   private def closedExecution(whid: Integer = null): WorkflowExecutions =
@@ -464,6 +506,11 @@ class WorkflowExecutionsResourceSpec
 
       removedTables.foreach(uri => assert(!hasTable(uri), uri))
       keptTables.foreach(uri => assert(hasTable(uri), uri))
+      // Their namespaces go with them, and so does what their tokens could do.
+      Seq(removed, alsoRemoved).foreach { execution =>
+        assert(!hasNamespace(execution) && revoked(execution), execution.getEid)
+      }
+      assert(hasNamespace(kept) && !revoked(kept))
       assert(
         binariesDeletedFor.asScala.toSeq ==
           Seq(removed.getEid.longValue(), alsoRemoved.getEid.longValue())
@@ -487,6 +534,7 @@ class WorkflowExecutionsResourceSpec
       assert(refused.getResponse.getStatus == 409)
       assert(refused.getMessage == s"execution ${open.getEid} is still open; kill it first")
       tables.foreach(uri => assert(hasTable(uri), uri))
+      assert(!revoked(closed) && !revoked(open))
       assert(hasRow(closed))
       assert(hasRow(open))
       assert(binariesDeletedFor.isEmpty)
@@ -495,8 +543,11 @@ class WorkflowExecutionsResourceSpec
 
   it should "keep the row of an execution whose tables could not be dropped, to find them by" in {
     val lakeDown = new IllegalStateException("the lake is out of reach")
-    val failing =
-      new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => throw lakeDown)
+    val failing = new ExecutionExpiry(
+      warehousesEnabled = false,
+      deleteBinaries = _ => throw lakeDown,
+      access = catalogAccess
+    )
     val first = closedExecution()
     val second = closedExecution()
 

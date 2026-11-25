@@ -145,8 +145,7 @@ private object ExecutionLogDetail {
 
 /**
   * Keeps each execution's log table, one of its [[ExecutionTables]], at the URI [[logUri]] names
-  * (namespace `storage.iceberg.table.execution-log-namespace`, table
-  * `wid_<wid>_eid_<eid>_executionlog`).
+  * (table `wid_<wid>_eid_<eid>_executionlog` in the execution's namespace, `execution-<eid>`).
   *
   * The engine appends a row for every change of the run's state (see [[ExecutionLogEntry]]), and
   * the commit that appends a row also sets the label: table properties that repeat the newest

@@ -80,6 +80,12 @@ storage:
     existingSecret: ""      # existing Secret with access-key-id / secret-access-key; "" => chart creates one
     accessKeyId: ""
     secretAccessKey: ""
+    # The key each computing unit gets. With lakekeeperInit.createBucket the bucket job makes it
+    # a user of the in-cluster RustFS that reaches only the large-binaries bucket, so a unit
+    # reads and writes the lake's tables only through the catalog. With an external store, make
+    # such a user there. "" => units get the key above.
+    unitAccessKeyId: "texera-unit"
+    unitSecretAccessKey: "texera-unit-password"
 
 rustfs:
   # Set to false to disable the in-cluster RustFS and point the services at an
@@ -170,7 +176,28 @@ lakekeeper:
   enabled: true
   postgresql:
     enabled: false
+  # Lakekeeper keeps its grants in the chart's own OpenFGA (the `openfga` block below), not in
+  # the subchart's, which would bring a second Postgres with a volume of its own.
   internalOpenFGA: false
+  authz:
+    # Lakekeeper checks every call against the grants the Dashboard service makes, so an
+    # execution reaches only its own namespace. A catalog set up under another backend cannot
+    # be switched to this one: its objects have no grants, so nobody can reach them afterwards,
+    # the operator included. An existing release needs a fresh texera_lakekeeper database, and
+    # a texera_openfga one, which the init script makes only on a fresh Postgres volume.
+    backend: openfga
+    openfga:
+      # The chart's OpenFGA Service, over gRPC.
+      endpoint: http://openfga-svc:8081
+  auth:
+    oauth2:
+      # Lakekeeper accepts a call only with a token the Texera services signed. The access
+      # control service publishes their key here; Lakekeeper reads it when it starts and does
+      # not start without it. The wait-catalog-issuer container below waits on this address.
+      providerUri: &catalogIssuer http://access-control-service-svc:9096/api/catalog-issuer
+      # The audience every catalog token names. The Dashboard service signs its tokens for it
+      # (webserver-deployment.yaml hands it this value).
+      audience: texera-catalog
   catalog:
     replicas: 1
     image:
@@ -179,6 +206,37 @@ lakekeeper:
       pullPolicy: IfNotPresent
     service:
       externalPort: 8181
+    # Lakekeeper starts once OpenFGA and the catalog token issuer both answer.
+    extraInitContainers:
+      - &waitOpenfga
+        name: wait-openfga
+        image: curlimages/curl:8.22.0
+        command:
+          - /bin/sh
+          - -c
+          - |
+            echo "Waiting for OpenFGA..."
+            until curl -sf --max-time 5 http://openfga-svc:8080/healthz > /dev/null; do
+              sleep 2
+            done
+      - name: wait-catalog-issuer
+        image: curlimages/curl:8.22.0
+        env:
+          - name: PROVIDER_URI
+            value: *catalogIssuer
+        command:
+          - /bin/sh
+          - -c
+          - |
+            echo "Waiting for the catalog token issuer at ${PROVIDER_URI}..."
+            until curl -sf --max-time 5 "${PROVIDER_URI}/.well-known/openid-configuration" \
+                > /dev/null; do
+              sleep 2
+            done
+    dbMigrations:
+      # The migration writes Lakekeeper's authorization model into OpenFGA, so it waits too.
+      extraInitContainers:
+        - *waitOpenfga
   externalDatabase:
     type: postgres
     host_read: texera-postgresql
@@ -188,26 +246,28 @@ lakekeeper:
     user: postgres
     password: root_password
 
+# OpenFGA, the store Lakekeeper keeps its grants in: the texera_openfga database of the
+# Postgres above, which the init script makes. It answers whoever reaches it without asking
+# for a credential, so only Lakekeeper may reach it (openfga-network-policy.yaml). Lakekeeper
+# finds it as openfga-svc (lakekeeper.authz.openfga.endpoint and the wait-openfga containers).
+openfga:
+  image: openfga/openfga:v1.11.2
+  numOfPods: 1
+
+# Lakekeeper's warehouses, which all keep their tables in one bucket of the object store above
+# (storage.s3), each under its own key prefix. The Dashboard service registers them with
+# Lakekeeper: when it starts, the shared one (`warehouse` below), which executions use while
+# per-user warehouses are off; and each user's warehouse when the user makes one.
 lakekeeperInit:
-  enabled: true
-  # Create the object-store bucket from the init job (true for in-cluster RustFS).
-  # Set false when pointing at a pre-existing external bucket (e.g. AWS S3) whose
-  # IAM principal can't CreateBucket.
+  # Create that bucket from a job (true for in-cluster RustFS). Set false when pointing at a
+  # pre-existing external bucket (e.g. AWS S3) whose IAM principal can't CreateBucket.
   createBucket: true
-  # S3 client image used by the create-bucket init container. `rc` is RustFS's
-  # client; any image whose entrypoint is an `mc`-style client with
-  # `alias set` / `bucket create` would do.
+  # S3 client image used by the create-bucket job. `rc` is RustFS's client; any image whose
+  # entrypoint is an `mc`-style client with `alias set` / `bucket create` would do.
   bucketClientImage: rustfs/rc:v0.1.35
-  defaultProject:
-    id: "00000000-0000-0000-0000-000000000000"
-    name: default
   warehouse:
     name: texera
-    region: us-west-2
     s3Bucket: texera-iceberg
-    # Lakekeeper S3 storage-profile flavor: "s3-compat" (RustFS/other; adds
-    # endpoint + path-style-access) or "aws" (real AWS S3; omits both).
-    flavor: s3-compat
     # Object-key prefix for this warehouse. Must stay non-empty: a warehouse at the
     # bucket root overlaps every per-user warehouse's prefix (#7739).
     keyPrefix: "shared"

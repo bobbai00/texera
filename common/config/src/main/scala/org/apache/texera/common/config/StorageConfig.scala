@@ -40,10 +40,20 @@ object StorageConfig {
     conf.getString("storage.iceberg.catalog.rest.warehouse-name")
   val icebergRESTCatalogS3Bucket: String =
     conf.getString("storage.iceberg.catalog.rest.s3-bucket")
+  val icebergRESTCatalogKeyPrefix: String =
+    conf.getString("storage.iceberg.catalog.rest.key-prefix")
   val icebergRESTCatalogConnectionTimeoutMs: Long =
     conf.getLong("storage.iceberg.catalog.rest.connection-timeout-ms")
   val icebergRESTCatalogSocketTimeoutMs: Int =
     conf.getInt("storage.iceberg.catalog.rest.socket-timeout-ms")
+
+  // The tokens the services give the REST catalog (CatalogTokens in common/auth)
+  val icebergRESTCatalogTokenIssuer: String =
+    conf.getString("storage.iceberg.catalog.rest.token.issuer")
+  val icebergRESTCatalogTokenAudience: String =
+    conf.getString("storage.iceberg.catalog.rest.token.audience")
+  val icebergRESTCatalogTokenExecutionTtlSeconds: Long =
+    conf.getLong("storage.iceberg.catalog.rest.token.execution-ttl-seconds")
 
   // Iceberg Postgres specifics
   val icebergPostgresCatalogUriWithoutScheme: String =
@@ -72,15 +82,6 @@ object StorageConfig {
   )
 
   // Iceberg Table specifics
-  val icebergTableResultNamespace: String = conf.getString("storage.iceberg.table.result-namespace")
-  val icebergTableConsoleMessagesNamespace: String =
-    conf.getString("storage.iceberg.table.console-messages-namespace")
-  val icebergTableRuntimeStatisticsNamespace: String =
-    conf.getString("storage.iceberg.table.runtime-statistics-namespace")
-  val icebergTableStateNamespace: String =
-    conf.getString("storage.iceberg.table.state-namespace")
-  val icebergTableExecutionLogNamespace: String =
-    conf.getString("storage.iceberg.table.execution-log-namespace")
   val icebergTableCommitBatchSize: Int =
     conf.getInt("storage.iceberg.table.commit.batch-size")
   val icebergTableCommitIntervalMs: Long =
@@ -107,6 +108,9 @@ object StorageConfig {
   val s3Region: String = conf.getString("storage.s3.region")
   val s3Username: String = conf.getString("storage.s3.auth.username")
   val s3Password: String = conf.getString("storage.s3.auth.password")
+  // The key a computing unit is given: one that reaches only the large-binaries bucket.
+  val s3UnitUsername: String = conf.getString("storage.s3.unit-auth.username")
+  val s3UnitPassword: String = conf.getString("storage.s3.unit-auth.password")
   val s3LargeBinariesBucket: String = conf.getString("storage.s3.large-binaries-bucket")
   val s3MultipartUploadPartSize: Long = parseSizeStringToBytes(
     conf.getString("storage.s3.multipart.part-size")

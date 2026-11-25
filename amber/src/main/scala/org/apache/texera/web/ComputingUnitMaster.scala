@@ -27,6 +27,7 @@ import io.dropwizard.lifecycle.Managed
 import io.dropwizard.setup.{Bootstrap, Environment}
 import io.dropwizard.websockets.WebsocketBundle
 import org.apache.texera.common.config.ApplicationConfig
+import org.apache.texera.amber.core.storage.CatalogIdentity
 import org.apache.texera.amber.core.workflow.{PhysicalPlan, WorkflowContext}
 import org.apache.texera.amber.engine.architecture.coordinator.CoordinatorConfig
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState.FAILED
@@ -113,6 +114,9 @@ object ComputingUnitMaster {
   }
 
   def main(args: Array[String]): Unit = {
+    // What this process asks the lake's catalog about an execution carries the execution's
+    // token, which the start of the execution hands over (ExecutionHandoverResource).
+    CatalogIdentity.use(CatalogIdentity.Executions)
     val argMap = parseArgs(args)
 
     val clusterMode = argMap.get(Symbol("cluster")).asInstanceOf[Option[Boolean]].getOrElse(false)

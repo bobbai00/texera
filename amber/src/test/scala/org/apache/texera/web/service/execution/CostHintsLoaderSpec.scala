@@ -40,6 +40,7 @@ import org.apache.texera.amber.core.workflow.{
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState._
 import org.apache.texera.amber.engine.common.Utils.maptoStatusCode
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
 import org.apache.texera.dao.jooq.generated.Tables.{
@@ -99,7 +100,14 @@ class CostHintsLoaderSpec
   /** Seconds are given to the second, as `starting_time` keeps them. */
   private val firstStart = Timestamp.valueOf("2026-01-01 00:00:00").getTime
 
-  private val tables = mutable.ListBuffer.empty[URI]
+  /** The runs the suite stored statistics of, each in its namespace: dropped after the suite. */
+  private val madeNamespaces = mutable.Set.empty[Long]
+
+  /** Makes the namespace of run `eid`, as the Dashboard service makes it at the create. */
+  private def withNamespace(eid: Int): Unit = {
+    TestUtils.makeExecutionNamespace(eid.toLong)
+    madeNamespaces += eid.toLong
+  }
 
   override protected def beforeAll(): Unit = {
     super.beforeAll()
@@ -117,7 +125,7 @@ class CostHintsLoaderSpec
 
   override protected def afterAll(): Unit =
     try {
-      tables.foreach(dropStatistics)
+      madeNamespaces.foreach(eid => Try(TestUtils.dropExecutionNamespace(eid)))
       closeConnectionPool()
     } finally super.afterAll()
 
@@ -193,7 +201,7 @@ class CostHintsLoaderSpec
     */
   private def statistics(wid: Int, eid: Int, rows: (String, Long, Long)*): String = {
     val uri = statisticsUri(wid, eid)
-    tables += uri
+    withNamespace(eid)
     RuntimeStatisticsStore.create(uri)
     RuntimeStatisticsStore.append(
       uri,
@@ -237,7 +245,7 @@ class CostHintsLoaderSpec
       new Attribute("status", AttributeType.INTEGER)
     )
     val uri = statisticsUri(wid, eid)
-    tables += uri
+    withNamespace(eid)
     val writer = DocumentFactory
       .createDocument(uri, earlierSchema)
       .writer("cost-hints-spec")

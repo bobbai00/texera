@@ -22,7 +22,7 @@ package org.apache.texera.web.service.execution
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import io.dropwizard.setup.Bootstrap
 import org.apache.texera.amber.core.executor.{OpExecWithClassName, OpExecWithCode}
-import org.apache.texera.amber.core.storage.RepositoryVersionResolver
+import org.apache.texera.amber.core.storage.{ExecutionTables, RepositoryVersionResolver}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -213,8 +213,10 @@ class OperatorUpdatesSpec
   }
 
   override protected def afterAll(): Unit =
-    try closeConnectionPool()
-    finally super.afterAll()
+    try {
+      catalogAccess.opened.keys.foreach(eid => Try(ExecutionTables.dropNamespace(eid, None)))
+      closeConnectionPool()
+    } finally super.afterAll()
 
   // --- fixtures ---
 
@@ -267,6 +269,13 @@ class OperatorUpdatesSpec
     finally unitAnswer = Taken
   }
 
+  /**
+    * The Dashboard's catalog access for the creates of the suite: it makes each execution's
+    * namespace, which the suite drops after it, and keeps its catalog user, its grants and its
+    * token, as on a REST catalog.
+    */
+  private val catalogAccess = new RecordingCatalogAccess()
+
   /** Creates executions with the fixture bindings and no cost hints, on units that take them. */
   private class FixtureCreator
       extends ExecutionCreator(
@@ -278,7 +287,12 @@ class OperatorUpdatesSpec
         costHints = NoHints,
         background = _.run(),
         // No large binary is deleted for what a create finds replaced.
-        expiry = new ExecutionExpiry(warehousesEnabled = false, deleteBinaries = _ => ())
+        expiry = new ExecutionExpiry(
+          warehousesEnabled = false,
+          deleteBinaries = _ => (),
+          access = catalogAccess
+        ),
+        access = catalogAccess
       )
 
   private object NoHints extends CostHintsLoader(1) {

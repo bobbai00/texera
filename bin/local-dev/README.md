@@ -60,6 +60,9 @@ Python 3.12, Node 24 — plus sbt and docker, Linux needs:
   then log in again. Group membership does not apply to shells that are
   already running, so a `docker compose` permission error right after that
   command is expected.
+* **containers allowed to reach the host's ports 9096 and 8085**, if a
+  firewall (ufw, firewalld) guards the host: Lakekeeper and the gateway call
+  the access control service and the computing unit there.
 
 `HOST_LAN_IP` is detected for you; export it only to override the choice, e.g.
 to pin one interface on a multi-homed host. The address has to be reachable
@@ -68,6 +71,19 @@ container bridges (`docker0`, `br-*`, `veth*`) and overlay/VPN interfaces
 (tailscale, zerotier, wireguard): `172.17.0.1` looks like a perfectly good
 local IPv4 but is not reachable from inside another container's network
 namespace.
+
+The containers that call the services running on the host reach them at that
+address too. The dev server's proxy sends the computing unit's websocket to
+bin/single-node's gateway, started here on `localhost:8086`, which asks the
+access control service who the caller is and where the unit is, as in a
+deployment. Lakekeeper reads the key it checks catalog tokens with from the
+access control service when it starts, so it comes up after the services on the
+host.
+
+The lake's catalog checks access, which needs a `texera_openfga` database that
+Postgres creates only for a new volume. A Postgres volume made before that has
+none, and its catalog cannot be carried over: `up` stops and says how to start
+from new data.
 
 Email verification is on by default in the product, and refuses to issue a code when no
 SMTP sender is configured rather than logging it. A local stack has no sender, so
@@ -83,7 +99,7 @@ bin/local-dev/
 ├── main.sh                       shell engine — sbt builds, service lifecycle, port checks
 ├── tui.py                        Textual dashboard surfaced by `bin/local-dev.sh -i`
 ├── docker-compose.override.yml   overlay on top of bin/single-node/docker-compose.yml
-│                                 (host-LAN-IP RustFS endpoint, Lakekeeper warehouse, etc.)
+│                                 (published ports; Lakekeeper and the gateway pointed at the host)
 └── tests/
     ├── test_local_dev_sh.sh      bash smoke: license header, syntax, version, --help,
     │                             error-on-bad-input, regression guards

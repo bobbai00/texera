@@ -187,7 +187,7 @@ When Texera creates an execution, the compiling service makes its plan and finds
 ### Give a computing unit another setting
 A computing unit runs users' code, so it is not given the whole `.env`: it gets only the variables listed under `environment` of `workflow-runtime-coordinator-service` in `docker-compose.yml`, each with the value `.env` gives it. To pass it another variable, add the variable's name to that list.
 
-The computing unit is also on a network of its own. It reaches the lake's catalog and the object store, and only the gateway, the Dashboard service and the agent service reach it.
+The computing unit is also on a network of its own. It reaches the lake's catalog and the object store, and only the gateway, the Dashboard service and the agent service reach it. It holds no credential for the lake's catalog: each execution the Dashboard service hands it comes with a token that reaches only that execution's tables.
 
 ### Change the locations of Texera data
 By default, Docker manages Texera's data locations. To change them to your own locations:
@@ -272,7 +272,9 @@ Stop the conflicting process, or change Texera's ports following the instruction
 
 ### Volume conflicts
 
-PostgreSQL only runs the database initialization scripts on first startup (when its data volume is empty). If you previously started Texera and then ran `docker compose down` (without `-v`), the data volume still exists. On the next `docker compose up`, the initialization is skipped, which can cause services like lakeFS to fail because their required databases were never created.
+PostgreSQL only runs the database initialization scripts on first startup (when its data volume is empty). If you previously started Texera and then ran `docker compose down` (without `-v`), the data volume still exists. On the next `docker compose up`, the initialization is skipped, which can cause services like lakeFS or OpenFGA to fail because their required databases were never created.
+
+The same holds after an upgrade from a version whose lake catalog did not check who may read and write each execution's tables: OpenFGA, where the catalog keeps these permissions, has no database in the old volume, and the old catalog cannot be carried over.
 
 To resolve this, remove all existing volumes and start fresh:
 

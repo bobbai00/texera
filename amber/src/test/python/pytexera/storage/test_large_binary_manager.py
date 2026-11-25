@@ -40,8 +40,6 @@ def _init_storage_config():
             postgres_password="test",
             rest_catalog_uri="http://localhost:8181/catalog/",
             rest_catalog_warehouse_name="texera",
-            table_result_namespace="test",
-            table_state_namespace="test-state",
             directory_path="/tmp/test",
             commit_batch_size=1000,
             s3_endpoint="http://localhost:9000",

@@ -54,6 +54,7 @@ import org.apache.texera.amber.engine.architecture.coordinator.{
 }
 import org.apache.texera.amber.engine.architecture.rpc.controlreturns.WorkflowAggregatedState
 import org.apache.texera.amber.engine.common.client.AmberClient
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.util.JSONUtils.objectMapper
 import org.apache.texera.web.model.websocket.event.{
   PaginatedResultEvent,
@@ -1050,8 +1051,9 @@ class ExecutionResultServiceSpec
       ((globalPortIdOf(operatorId, port), uri))
 
   /**
-    * Creates a real Iceberg result table holding `tuples`, and records its URI for `executionId`
-    * as what a run of the execution's engine reports ([[reportResult]]).
+    * Creates a real Iceberg result table holding `tuples`, in the namespace of `executionId`,
+    * and records its URI for `executionId` as what a run of the execution's engine reports
+    * ([[reportResult]]).
     */
   private def storeResult(
       executionId: ExecutionIdentity,
@@ -1061,6 +1063,7 @@ class ExecutionResultServiceSpec
       port: PortIdentity = PortIdentity()
   ): URI = {
     val uri = resultUriOf(executionId, operatorId, port = port)
+    TestUtils.makeExecutionNamespace(executionId.id)
     val document = DocumentFactory.createDocument(uri, schema)
     val writer = document.writer("erss").asInstanceOf[BufferedItemWriter[Tuple]]
     writer.open()

@@ -22,18 +22,27 @@ import pytest
 
 from core.models import Schema
 from core.storage.document_factory import DocumentFactory
-from core.storage.storage_config import StorageConfig
-from core.storage.vfs_uri_factory import VFSResourceType, VFSUriComponents
+from core.storage.vfs_uri_factory import (
+    VFSResourceType,
+    VFSURIFactory,
+    VFSUriComponents,
+)
+from proto.org.apache.texera.amber.core import (
+    ExecutionIdentity,
+    GlobalPortIdentity,
+    OperatorIdentity,
+    PhysicalOpIdentity,
+    PortIdentity,
+    WorkflowIdentity,
+)
 
 
-# Avoid initializing the real config (only initializable once per process).
-StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE = "test-result-ns"
-StorageConfig.ICEBERG_TABLE_STATE_NAMESPACE = "test-state-ns"
-
-VFS_URI = "vfs:///wid/0/eid/0/opid/test/main/0/0/result"
+VFS_URI = "vfs:///wid/12/eid/40/opid/test/main/0/0/result"
 # The storage key VFS_URI sanitizes down to; the routing tests below assert
 # that it is what actually reaches the iceberg layer.
-VFS_URI_STORAGE_KEY = "wid_0_eid_0_opid_test_main_0_0_result"
+VFS_URI_STORAGE_KEY = "wid_12_eid_40_opid_test_main_0_0_result"
+# The namespace of execution 40, which holds every table of that execution.
+EXECUTION_NAMESPACE = "execution-40"
 
 
 @pytest.fixture
@@ -42,8 +51,11 @@ def schema():
 
 
 def _decode_returning(resource_type):
-    """Helper: build a VFSURIFactory.decode_uri side_effect."""
-    return lambda _uri: VFSUriComponents(None, None, None, resource_type)
+    """Helper: build a VFSURIFactory.decode_uri side_effect for a URI of
+    execution 40."""
+    return lambda _uri: VFSUriComponents(
+        WorkflowIdentity(id=12), ExecutionIdentity(id=40), None, resource_type
+    )
 
 
 def test_sanitize_uri_path_unquotes_strips_the_warehouse_and_flattens():
@@ -59,13 +71,44 @@ def test_sanitize_uri_path_unquotes_strips_the_warehouse_and_flattens():
     assert DocumentFactory.sanitize_uri_path(parsed) == "wid_0_my op_result_"
 
 
+@patch("core.storage.document_factory.IcebergCatalogInstance")
+def test_a_port_uri_resolves_to_its_warehouse_execution_namespace_and_table(mock_icb):
+    # Through the real decode: the warehouse comes from the leading "wh/<name>"
+    # segment, the namespace from the execution in the URI, and the table keeps
+    # the name it always had. DocumentFactory.scala resolves the same three.
+    catalog = MagicMock()
+    catalog.table_exists.return_value = True
+    mock_icb.get_instance.return_value = catalog
+    port = GlobalPortIdentity(
+        op_id=PhysicalOpIdentity(
+            logical_op_id=OperatorIdentity(id="op"), layer_name="main"
+        ),
+        port_id=PortIdentity(id=0),
+        input=False,
+    )
+    uri = VFSURIFactory.result_uri(
+        VFSURIFactory.create_port_base_uri(
+            WorkflowIdentity(id=12), ExecutionIdentity(id=40), port, "user-5-3"
+        )
+    )
+
+    assert DocumentFactory.document_exists(uri) is True
+
+    mock_icb.get_instance.assert_called_once_with("user-5-3")
+    catalog.table_exists.assert_called_once_with(
+        "execution-40.wid_12_eid_40_globalportid_"
+        "(logicalOpId=op,layerName=main,portId=0,isInternal=false,isInput=false)"
+        "_result"
+    )
+
+
 @patch("core.storage.document_factory.IcebergDocument")
 @patch("core.storage.document_factory.amber_schema_to_iceberg_schema")
 @patch("core.storage.document_factory.create_table")
 @patch("core.storage.document_factory.IcebergCatalogInstance")
 @patch("core.storage.document_factory.VFSURIFactory")
 class TestCreateDocumentNamespaceRouting:
-    def test_state_resource_type_uses_state_namespace(
+    def test_a_state_uri_uses_the_namespace_of_its_execution(
         self, mock_vfs, _icb, mock_create_table, _amber_schema, _doc, schema
     ):
         mock_vfs.VFS_FILE_URI_SCHEME = "vfs"
@@ -74,9 +117,9 @@ class TestCreateDocumentNamespaceRouting:
         DocumentFactory.create_document(VFS_URI, schema)
 
         args, _ = mock_create_table.call_args
-        assert args[1] == StorageConfig.ICEBERG_TABLE_STATE_NAMESPACE
+        assert args[1] == EXECUTION_NAMESPACE
 
-    def test_result_resource_type_uses_result_namespace(
+    def test_a_result_uri_uses_the_namespace_of_its_execution(
         self, mock_vfs, _icb, mock_create_table, _amber_schema, _doc, schema
     ):
         mock_vfs.VFS_FILE_URI_SCHEME = "vfs"
@@ -85,7 +128,7 @@ class TestCreateDocumentNamespaceRouting:
         DocumentFactory.create_document(VFS_URI, schema)
 
         args, kwargs = mock_create_table.call_args
-        assert args[1] == StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE
+        assert args[1] == EXECUTION_NAMESPACE
         # A table left over from an earlier execution of the same operator
         # must be overwritten, not silently reused with stale rows.
         assert kwargs["override_if_exists"] is True
@@ -103,7 +146,7 @@ class TestCreateDocumentNamespaceRouting:
         # would go unnoticed by every namespace-only assertion above.
         constructor = mock_doc.__getitem__.return_value
         assert constructor.call_args.args[:2] == (
-            StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE,
+            EXECUTION_NAMESPACE,
             VFS_URI_STORAGE_KEY,
         )
         assert document is constructor.return_value
@@ -112,7 +155,8 @@ class TestCreateDocumentNamespaceRouting:
         self, mock_vfs, _icb, _create_table, _amber_schema, _doc, schema
     ):
         mock_vfs.VFS_FILE_URI_SCHEME = "vfs"
-        # CONSOLE_MESSAGES has no namespace mapping in the Python factory.
+        # Console messages are written by the Scala side alone, into the same
+        # namespace: creating their table here would drop the one it writes.
         mock_vfs.decode_uri.side_effect = _decode_returning(
             VFSResourceType.CONSOLE_MESSAGES
         )
@@ -121,7 +165,7 @@ class TestCreateDocumentNamespaceRouting:
             DocumentFactory.create_document(VFS_URI, schema)
 
 
-def test_execution_log_uri_has_no_namespace_on_the_python_side(schema):
+def test_an_execution_log_uri_is_refused_on_the_python_side(schema):
     # An execution's log is the Scala side's alone; the URI decodes here but no
     # Python entry point reaches a catalog with it.
     log_uri = "vfs:///wid/12/eid/345/executionlog"
@@ -156,7 +200,7 @@ class TestOpenDocumentNamespaceRouting:
         table.schema.return_value.as_arrow.return_value = MagicMock()
         return table
 
-    def test_state_resource_type_uses_state_namespace(
+    def test_a_state_uri_uses_the_namespace_of_its_execution(
         self, mock_vfs, _icb, mock_load, _schema_cls, _doc
     ):
         mock_vfs.VFS_FILE_URI_SCHEME = "vfs"
@@ -166,7 +210,7 @@ class TestOpenDocumentNamespaceRouting:
         DocumentFactory.open_document(VFS_URI)
 
         args, _ = mock_load.call_args
-        assert args[1] == StorageConfig.ICEBERG_TABLE_STATE_NAMESPACE
+        assert args[1] == EXECUTION_NAMESPACE
 
     def test_returns_the_document_and_the_schema_of_the_loaded_table(
         self, mock_vfs, _icb, mock_load, mock_schema_cls, mock_doc
@@ -181,7 +225,7 @@ class TestOpenDocumentNamespaceRouting:
         # return (None, None) -- or transpose the namespace and storage key
         # it hands the document -- with nothing in this file noticing.
         assert mock_doc.call_args.args[:2] == (
-            StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE,
+            EXECUTION_NAMESPACE,
             VFS_URI_STORAGE_KEY,
         )
         assert document is mock_doc.return_value
@@ -227,8 +271,9 @@ class TestDocumentExists:
         mock_icb.get_instance.return_value = catalog
 
         assert DocumentFactory.document_exists(VFS_URI) is True
-        identifier = catalog.table_exists.call_args.args[0]
-        assert identifier.startswith(f"{StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE}.")
+        catalog.table_exists.assert_called_once_with(
+            f"{EXECUTION_NAMESPACE}.{VFS_URI_STORAGE_KEY}"
+        )
 
     def test_returns_false_when_table_missing(self, mock_vfs, mock_icb):
         mock_vfs.VFS_FILE_URI_SCHEME = "vfs"

@@ -25,16 +25,23 @@ import io.dropwizard.auth.AuthValueFactoryProvider
 import io.dropwizard.jackson.Jackson
 import io.dropwizard.testing.junit5.ResourceExtension
 import jakarta.ws.rs.core.{HttpHeaders, MediaType, Response}
-import org.apache.iceberg.catalog.TableIdentifier
+import org.apache.iceberg.Table
+import org.apache.iceberg.catalog.{Catalog, TableIdentifier}
+import org.apache.iceberg.exceptions.{ForbiddenException, NotAuthorizedException}
 import org.apache.iceberg.types.Types
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
+  ExecutionNamespace,
   IcebergCatalogInstance,
   LocalHadoopIcebergCatalog,
   VFSURIFactory
 }
 import org.apache.texera.amber.core.storage.model.{BufferedItemWriter, VirtualDocument}
-import org.apache.texera.amber.core.storage.result.iceberg.{FailingCatalog, OnIceberg}
+import org.apache.texera.amber.core.storage.result.iceberg.{
+  CountingCatalog,
+  FailingCatalog,
+  OnIceberg
+}
 import org.apache.texera.amber.core.tuple.{Attribute, AttributeType, Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{
   ExecutionIdentity,
@@ -43,6 +50,7 @@ import org.apache.texera.amber.core.virtualidentity.{
   WorkflowIdentity
 }
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity}
+import org.apache.texera.amber.util.IcebergUtil
 import org.apache.texera.amber.util.serde.GlobalPortIdentitySerde.SerdeOps
 import org.apache.texera.auth.{JwtAuth, JwtAuthFilter, SessionUser, UnauthorizedExceptionMapper}
 import org.apache.texera.dao.MockTexeraDB
@@ -206,12 +214,22 @@ class ResultResourceSpec
     getDSLContext.deleteFrom(WORKFLOW_EXECUTIONS).execute()
   }
 
-  /** Runs `body` on a catalog that lets `succeeding` `loadTable` calls through, then fails. */
-  private def withFailingCatalog(succeeding: Int)(body: => Unit): Unit = {
+  /** Runs `body` on what `replace` makes of the shared catalog, then puts the shared one back. */
+  private def withCatalog(replace: Catalog => Catalog)(body: => Unit): Unit = {
     val catalog = IcebergCatalogInstance.getInstance()
-    IcebergCatalogInstance.replaceInstance(new FailingCatalog(catalog, succeeding))
+    IcebergCatalogInstance.replaceInstance(replace(catalog))
     try body
     finally IcebergCatalogInstance.replaceInstance(catalog)
+  }
+
+  /** Runs `body` on a catalog that lets `succeeding` `loadTable` calls through, then fails. */
+  private def withFailingCatalog(succeeding: Int)(body: => Unit): Unit =
+    withCatalog(new FailingCatalog(_, succeeding))(body)
+
+  /** Refuses to load any table, with `refusal`, as Lakekeeper refuses a caller. */
+  private class RefusingCatalog(delegate: Catalog, refusal: () => RuntimeException)
+      extends CountingCatalog(delegate) {
+    override def loadTable(identifier: TableIdentifier): Table = throw refusal()
   }
 
   /**
@@ -296,6 +314,11 @@ class ResultResourceSpec
   ): URI = {
     val globalPortId = globalPort(operatorId, port)
     val uri = resultUri(eid, globalPortId)
+    // The Dashboard service makes an execution's namespace before the execution stores anything.
+    IcebergUtil.createNamespace(
+      IcebergCatalogInstance.getInstance(),
+      ExecutionNamespace.of(eid.longValue())
+    )
     write(DocumentFactory.createDocument(uri, schema), data, "store")
     insertRow(eid, globalPortId, uri.toString, mode)
     uri
@@ -639,6 +662,27 @@ class ResultResourceSpec
 
     withFailingCatalog(succeeding = 1) {
       get(owner, pagesPath(eid)).getStatus shouldBe 500
+    }
+  }
+
+  it should "answer 503, not 500, when the catalog refuses this service" in {
+    val eid = insertExecution(owner)
+    storeResult(eid)
+
+    // A token the catalog does not accept is a 401; one it does not let read the table, a 403.
+    Seq[() => RuntimeException](
+      () => new NotAuthorizedException("Not authorized: the token has expired"),
+      () => new ForbiddenException("Forbidden: no select on the table")
+    ).foreach { refusal =>
+      withCatalog(new RefusingCatalog(_, refusal)) {
+        Seq(pagesPath(eid), statisticsPath(eid)).foreach { path =>
+          withClue(s"${refusal().getClass.getSimpleName} on $path") {
+            val response = get(owner, path)
+            response.getStatus shouldBe 503
+            response.readEntity(classOf[JsonNode]).get("message").asText should include("catalog")
+          }
+        }
+      }
     }
   }
 

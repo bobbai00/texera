@@ -36,10 +36,11 @@ object RecordingComputingUnits {
   /**
     * What the Dashboard service handed a computing unit.
     *
-    * @param text a plan, or a change to an operator
-    * @param uid  the user it was handed over for
+    * @param text         a plan, or a change to an operator
+    * @param uid          the user it was handed over for
+    * @param catalogToken the catalog token a plan was handed over with; None with a change
     */
-  final case class Handed(cuid: Int, text: String, uid: Int)
+  final case class Handed(cuid: Int, text: String, uid: Int, catalogToken: Option[String] = None)
 }
 
 /**
@@ -61,8 +62,11 @@ class RecordingComputingUnits(outcome: => Handover = Taken) extends ComputingUni
   def updates: Seq[Handed] = updatesHanded.asScala.toSeq
 
   /** The plan handed over for execution `eid`: the one that names it. */
-  def planOf(eid: Long): Option[String] =
-    starts.map(_.text).find(plan => ExecutionStart.executionNamedBy(plan).contains(eid))
+  def planOf(eid: Long): Option[String] = startOf(eid).map(_.text)
+
+  /** The hand-over of the plan of execution `eid`: the one whose plan names it. */
+  def startOf(eid: Long): Option[Handed] =
+    starts.find(handed => ExecutionStart.executionNamedBy(handed.text).contains(eid))
 
   /** `response`, the answer to a create, with the plan handed over for its execution. */
   def created(response: CreateExecutionResponse): CreatedExecution =
@@ -73,8 +77,13 @@ class RecordingComputingUnits(outcome: => Handover = Taken) extends ComputingUni
       )
     )
 
-  override def start(cuid: Int, plan: String, uid: Int): Handover = {
-    startsHanded.add(Handed(cuid, plan, uid))
+  override def start(
+      cuid: Int,
+      plan: String,
+      uid: Int,
+      catalogToken: Option[String]
+  ): Handover = {
+    startsHanded.add(Handed(cuid, plan, uid, catalogToken))
     outcome
   }
 

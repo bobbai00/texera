@@ -17,6 +17,7 @@
 
 import base64
 import json
+import os
 import sys
 from loguru import logger
 
@@ -66,8 +67,6 @@ EXPECTED_CONFIG_KEYS = frozenset(
         "icebergPostgresCatalogPassword",
         "icebergRestCatalogUri",
         "icebergRestCatalogWarehouseName",
-        "icebergTableNamespace",
-        "icebergTableStateNamespace",
         "icebergFileStorageDirectoryPath",
         "icebergTableCommitBatchSize",
         "s3Endpoint",
@@ -77,6 +76,12 @@ EXPECTED_CONFIG_KEYS = frozenset(
         "s3LargeBinariesBaseUri",
     }
 )
+
+# The environment variable through which the JVM side (PythonWorkflowWorker) hands
+# the worker the token of its execution for the Iceberg REST catalog. It is not in
+# the startup config, which travels on the command line, where other processes on
+# the machine can read it.
+CATALOG_TOKEN_ENV_VAR = "TEXERA_ICEBERG_CATALOG_TOKEN"
 
 
 def parse_startup_config(raw_config: str) -> dict:
@@ -127,8 +132,6 @@ def main(raw_config: str) -> None:
         config["icebergPostgresCatalogPassword"],
         config["icebergRestCatalogUri"],
         config["icebergRestCatalogWarehouseName"],
-        config["icebergTableNamespace"],
-        config["icebergTableStateNamespace"],
         config["icebergFileStorageDirectoryPath"],
         config["icebergTableCommitBatchSize"],
         config["s3Endpoint"],
@@ -137,12 +140,11 @@ def main(raw_config: str) -> None:
         config["s3AuthPassword"],
         config["s3LargeBinariesBaseUri"],
     )
+    StorageConfig.ICEBERG_REST_CATALOG_TOKEN = os.environ.get(CATALOG_TOKEN_ENV_VAR, "")
 
     # Setting R_HOME environment variable for R-UDF usage
     r_path = config["rPath"]
     if r_path:
-        import os
-
         os.environ["R_HOME"] = r_path
 
     PythonWorker(

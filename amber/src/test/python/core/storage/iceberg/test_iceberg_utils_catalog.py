@@ -15,17 +15,24 @@
 # specific language governing permissions and limitations
 # under the License.
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlparse
 
 import pytest
+from botocore.awsrequest import AWSRequest
 from fsspec.config import conf
 from fsspec.implementations.local import LocalFileSystem
+from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.exceptions import NoSuchNamespaceError, NoSuchTableError
-from pyiceberg.io.fsspec import FsspecFileIO
+from pyiceberg.io.fsspec import FsspecFileIO, S3V4RestSigner
 from pyiceberg.partitioning import UNPARTITIONED_PARTITION_SPEC
 
 from core.storage.iceberg import iceberg_utils
 from core.storage.iceberg.iceberg_utils import (
+    create_namespace,
     create_postgres_catalog,
     create_rest_catalog,
     create_table,
@@ -279,12 +286,13 @@ class TestCreateRestCatalog:
     filesystem. `load_catalog` is patched so these run without a REST server.
     """
 
-    def _make(self, catalog_name, warehouse_name, rest_uri):
+    def _make(self, catalog_name, warehouse_name, rest_uri, **token):
         with patch.object(iceberg_utils, "load_catalog") as mock_load_catalog:
             catalog = create_rest_catalog(
                 catalog_name=catalog_name,
                 warehouse_name=warehouse_name,
                 rest_uri=rest_uri,
+                **token,
             )
         assert mock_load_catalog.call_count == 1
         assert catalog is mock_load_catalog.return_value
@@ -317,13 +325,36 @@ class TestCreateRestCatalog:
             "texera_iceberg", "texera-warehouse", "http://lakekeeper:8181/catalog"
         )
         # Assert every value, not just `type`: swapping `uri` and `warehouse`
-        # would otherwise go unnoticed.
+        # would otherwise go unnoticed. Without a token there is no `token`
+        # property at all.
         assert args == ("texera_iceberg",)
         assert kwargs == {
             "type": "rest",
             "uri": "http://lakekeeper:8181/catalog",
             "warehouse": "texera-warehouse",
         }
+
+    def test_a_token_is_sent_as_the_token_property(self):
+        _, kwargs = self._make(
+            "texera_iceberg",
+            "texera-warehouse",
+            "http://lakekeeper:8181/catalog",
+            token="execution-token",
+        )
+        assert kwargs == {
+            "type": "rest",
+            "uri": "http://lakekeeper:8181/catalog",
+            "warehouse": "texera-warehouse",
+            "token": "execution-token",
+        }
+
+    def test_an_empty_token_sets_no_token_property(self):
+        # What a worker started without a token passes (see
+        # texera_run_python_worker): the same as giving no token at all.
+        _, kwargs = self._make(
+            "texera_iceberg", "texera-warehouse", "http://lakekeeper:8181", token=""
+        )
+        assert "token" not in kwargs
 
     def test_a_windows_style_warehouse_name_is_not_normalized(self):
         """
@@ -335,6 +366,154 @@ class TestCreateRestCatalog:
         )
         assert kwargs["warehouse"] == "C:\\Users\\texera\\warehouse"
         assert "py-io-impl" not in kwargs
+
+
+class _CatalogStandIn(BaseHTTPRequestHandler):
+    """
+    Answers the few REST catalog calls the test below makes, and the signing
+    endpoint, recording the method, path and Authorization header of each
+    request on the server.
+    """
+
+    # A table as a REST catalog returns it, with the settings of a table whose S3
+    # requests the catalog signs: the fsspec FileIO and its S3 request signer.
+    LOADED_TABLE = {
+        "metadata-location": "s3://bucket/wh/t/metadata/00000.metadata.json",
+        "metadata": {
+            "format-version": 2,
+            "table-uuid": "9c12d441-03fe-4693-9a96-a0705ddf69c1",
+            "location": "s3://bucket/wh/t",
+            "last-sequence-number": 0,
+            "last-updated-ms": 1700000000000,
+            "last-column-id": 1,
+            "current-schema-id": 0,
+            "schemas": [
+                {
+                    "type": "struct",
+                    "schema-id": 0,
+                    "fields": [
+                        {"id": 1, "name": "x", "required": False, "type": "int"}
+                    ],
+                }
+            ],
+            "default-spec-id": 0,
+            "partition-specs": [{"spec-id": 0, "fields": []}],
+            "last-partition-id": 999,
+            "default-sort-order-id": 0,
+            "sort-orders": [{"order-id": 0, "fields": []}],
+            "properties": {},
+        },
+        "config": {
+            "py-io-impl": "pyiceberg.io.fsspec.FsspecFileIO",
+            "s3.signer": "S3V4RestSigner",
+            "s3.region": "us-east-1",
+        },
+    }
+
+    def do_GET(self):
+        path = self._record()
+        if path.endswith("/v1/config"):
+            self._reply({"defaults": {}, "overrides": {}})
+        else:
+            self._reply(self.LOADED_TABLE)
+
+    def do_POST(self):
+        self._record()
+        length = int(self.headers["Content-Length"])
+        to_sign = json.loads(self.rfile.read(length))
+        self._reply({"uri": to_sign["uri"], "headers": {}})
+
+    def _record(self):
+        path = urlparse(self.path).path
+        self.server.recorded.append(
+            (self.command, path, self.headers.get("Authorization"))
+        )
+        return path
+
+    def _reply(self, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def catalog_stand_in(monkeypatch):
+    # The catalog and the signer reach the stand-in through `requests`, which
+    # honours proxy settings from the environment; it is on this host.
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    # create_rest_catalog changes fsspec's global S3 settings; keep that here.
+    monkeypatch.setitem(conf, "s3", {})
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _CatalogStandIn)
+    server.recorded = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+class TestTheTokenReachesTheCatalog:
+    """
+    What a REST catalog made with a token sends, against a local stand-in for the
+    catalog server rather than a mock of pyiceberg. The catalog lets an
+    execution's token use only that execution's namespace, so the token has to be
+    on the catalog's own requests and on every request to sign an S3 read or
+    write of one of its tables.
+    """
+
+    def test_catalog_and_signing_requests_carry_the_token(self, catalog_stand_in):
+        uri = f"http://127.0.0.1:{catalog_stand_in.server_port}/catalog"
+        catalog = create_rest_catalog(
+            "texera_iceberg", "user-5-3", uri, token="execution-token"
+        )
+        table = catalog.load_table("execution-40.t")
+        # The signer fsspec registers on the table's S3 filesystem is made from
+        # the properties of the table's FileIO (pyiceberg.io.fsspec._s3); call it
+        # as botocore does before sending an S3 request.
+        assert isinstance(table.io, FsspecFileIO)
+        request = AWSRequest(method="PUT", url="http://127.0.0.1:1/bucket/wh/t/x")
+        request.context["client_region"] = "us-east-1"
+        S3V4RestSigner(table.io.properties)(request)
+
+        assert catalog_stand_in.recorded == [
+            ("GET", "/catalog/v1/config", "Bearer execution-token"),
+            (
+                "GET",
+                "/catalog/v1/namespaces/execution-40/tables/t",
+                "Bearer execution-token",
+            ),
+            ("POST", "/catalog/v1/aws/s3/sign", "Bearer execution-token"),
+        ]
+
+
+class TestCreateNamespace:
+    """
+    `create_namespace` stands in for the Dashboard Service, which makes each
+    execution's namespace, so it runs against a real (sqlite-backed) catalog: a
+    namespace that already exists is left as it is.
+    """
+
+    def test_makes_a_missing_namespace_and_leaves_an_existing_one(self, tmp_path):
+        catalog = SqlCatalog(
+            "create_namespace_test",
+            uri=f"sqlite:///{tmp_path}/catalog.sqlite",
+            warehouse=f"file://{tmp_path}",
+        )
+
+        create_namespace(catalog, "execution-7")
+        create_namespace(catalog, "execution-7")
+
+        assert catalog.list_namespaces() == [("execution-7",)]
 
 
 class TestCreateTable:
@@ -363,13 +542,24 @@ class TestCreateTable:
         )
         return table, schema
 
+    @pytest.mark.parametrize("table_exists", [True, False])
+    def test_the_namespace_is_never_created(self, table_exists):
+        # The Dashboard Service makes each execution's namespace before it
+        # starts, and the execution's token may not make one.
+        catalog = self._catalog(table_exists=table_exists)
+        self._create(catalog, override_if_exists=True)
+
+        catalog.create_namespace.assert_not_called()
+        catalog.create_namespace_if_not_exists.assert_not_called()
+
     def test_an_existing_table_is_dropped_when_override_is_requested(self):
         catalog = self._catalog(table_exists=True)
         table, schema = self._create(catalog, override_if_exists=True)
 
-        catalog.create_namespace_if_not_exists.assert_called_once_with(self.NAMESPACE)
         catalog.table_exists.assert_called_once_with(self.IDENTIFIER)
-        catalog.drop_table.assert_called_once_with(self.IDENTIFIER)
+        # Purged with it: the files of a table no catalog names are never deleted.
+        catalog.purge_table.assert_called_once_with(self.IDENTIFIER)
+        catalog.drop_table.assert_not_called()
         catalog.create_table.assert_called_once_with(
             identifier=self.IDENTIFIER,
             schema=schema,
@@ -383,6 +573,7 @@ class TestCreateTable:
         catalog = self._catalog(table_exists=True)
         self._create(catalog, override_if_exists=False)
 
+        catalog.purge_table.assert_not_called()
         catalog.drop_table.assert_not_called()
         catalog.create_table.assert_called_once()
 
@@ -390,6 +581,7 @@ class TestCreateTable:
         catalog = self._catalog(table_exists=False)
         self._create(catalog, override_if_exists=True)
 
+        catalog.purge_table.assert_not_called()
         catalog.drop_table.assert_not_called()
         catalog.create_table.assert_called_once()
 

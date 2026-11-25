@@ -19,19 +19,17 @@
 
 package org.apache.texera.amber.core.storage
 
-import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.amber.core.storage.FileResolver.{
   DATASET_FILE_URI_SCHEME,
   MODEL_FILE_URI_SCHEME
 }
-import org.apache.texera.amber.core.storage.VFSResourceType._
 import org.apache.texera.amber.core.storage.VFSURIFactory.{VFS_FILE_URI_SCHEME, decodeURI}
 import org.apache.texera.amber.core.storage.model._
 import org.apache.texera.amber.core.storage.result.iceberg.IcebergDocument
 import org.apache.texera.amber.core.tuple.{Schema, Tuple}
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.util.IcebergUtil
-import org.apache.iceberg.catalog.{Namespace, TableIdentifier}
+import org.apache.iceberg.catalog.{Catalog, Namespace, TableIdentifier}
 import org.apache.iceberg.data.Record
 import org.apache.iceberg.exceptions.NoSuchNamespaceException
 import org.apache.iceberg.{Table, Schema => IcebergSchema}
@@ -54,17 +52,6 @@ object DocumentFactory {
   private def sanitizeURIPath(uri: URI): String =
     uri.getPath.stripPrefix("/").replaceFirst("^wh/[^/]+/", "").replace("/", "_")
 
-  private def resolveNamespace(resourceType: VFSResourceType.Value): String =
-    resourceType match {
-      case RESULT             => StorageConfig.icebergTableResultNamespace
-      case CONSOLE_MESSAGES   => StorageConfig.icebergTableConsoleMessagesNamespace
-      case RUNTIME_STATISTICS => StorageConfig.icebergTableRuntimeStatisticsNamespace
-      case STATE              => StorageConfig.icebergTableStateNamespace
-      case EXECUTION_LOG      => StorageConfig.icebergTableExecutionLogNamespace
-      case _ =>
-        throw new IllegalArgumentException(s"Resource type $resourceType is not supported")
-    }
-
   /**
     * Open a document specified by the uri for read purposes only.
     * @param fileUri the uri of the document
@@ -82,21 +69,29 @@ object DocumentFactory {
   }
 
   /**
-    * The iceberg coordinates a VFS URI resolves to: which warehouse's catalog, which
-    * namespace, and which table (storage key). One resolver shared by every VFS entry
-    * point below, so the decode steps cannot drift apart (promised in #6944 review).
+    * The iceberg coordinates a VFS URI resolves to: which warehouse's catalog, which execution
+    * the table is of, which namespace (the execution's, [[ExecutionNamespace]]), and which table
+    * (storage key). One resolver shared by every VFS entry point below, so the decode steps
+    * cannot drift apart (promised in #6944 review).
     */
   private case class IcebergLocation(
       warehouse: Option[String],
+      execution: Long,
       namespace: String,
       storageKey: String
-  )
+  ) {
+
+    /** The catalog of the warehouse, for requests about the execution. */
+    def catalog: Catalog = IcebergCatalogInstance.getInstance(warehouse, Some(execution))
+  }
 
   private def resolveIcebergLocation(uri: URI): IcebergLocation = {
     val components = decodeURI(uri)
+    val execution = components.executionId.id
     IcebergLocation(
       components.warehouse,
-      resolveNamespace(components.resourceType),
+      execution,
+      ExecutionNamespace.of(execution),
       sanitizeURIPath(uri)
     )
   }
@@ -108,6 +103,8 @@ object DocumentFactory {
   /**
     * Create a document for storage specified by the uri.
     * This document is suitable for storing structural data, i.e. the schema is required to create such document.
+    * A vfs document's table is made in the namespace of the URI's execution, which must be
+    * there: no namespace is made here.
     * @param uri the location of the document
     * @param schema the schema of the data stored in the document
     * @param properties table properties the document is made with
@@ -120,24 +117,25 @@ object DocumentFactory {
   ): VirtualDocument[_] = {
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
-        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
+        val location = resolveIcebergLocation(uri)
 
         val icebergSchema = IcebergUtil.toIcebergSchema(schema)
         IcebergUtil.createTable(
-          IcebergCatalogInstance.getInstance(warehouse),
-          namespace,
-          storageKey,
+          location.catalog,
+          location.namespace,
+          location.storageKey,
           icebergSchema,
           overrideIfExists = true,
           properties
         )
         new IcebergDocument[Tuple](
-          namespace,
-          storageKey,
+          location.namespace,
+          location.storageKey,
           icebergSchema,
           tupleSerde,
           tupleDeserde,
-          warehouse
+          location.warehouse,
+          Some(location.execution)
         )
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
@@ -153,16 +151,13 @@ object DocumentFactory {
     * URI (e.g., an iceberg table at the resolved namespace + storage key).
     *
     * @throws UnsupportedOperationException if the URI scheme is not `vfs`.
-    * @throws IllegalArgumentException if the resolved resource type has no
-    *                                  iceberg namespace mapping.
+    * @throws IllegalArgumentException if the URI does not decode.
     */
   def documentExists(uri: URI): Boolean = {
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
-        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
-        IcebergCatalogInstance
-          .getInstance(warehouse)
-          .tableExists(TableIdentifier.of(namespace, storageKey))
+        val location = resolveIcebergLocation(uri)
+        location.catalog.tableExists(TableIdentifier.of(location.namespace, location.storageKey))
 
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
@@ -180,12 +175,8 @@ object DocumentFactory {
   private[storage] def icebergTableOf(uri: URI): Option[Table] =
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
-        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
-        IcebergUtil.loadTableMetadata(
-          IcebergCatalogInstance.getInstance(warehouse),
-          namespace,
-          storageKey
-        )
+        val location = resolveIcebergLocation(uri)
+        IcebergUtil.loadTableMetadata(location.catalog, location.namespace, location.storageKey)
       case unsupportedScheme =>
         throw new UnsupportedOperationException(
           s"Unsupported URI scheme: $unsupportedScheme for loading the table"
@@ -193,18 +184,19 @@ object DocumentFactory {
     }
 
   /**
-    * Drops the Iceberg table a VFS URI resolves to, with its rows and its tags. Failures are
-    * told apart as in [[icebergTableOf]].
+    * Drops the Iceberg table a VFS URI resolves to, with its rows and its tags, and purges its
+    * data files. Failures are told apart as in [[icebergTableOf]].
     *
     * @return false when there was no such table or namespace
     */
   private[storage] def dropTable(uri: URI): Boolean =
     uri.getScheme match {
       case VFS_FILE_URI_SCHEME =>
-        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
-        val catalog = IcebergCatalogInstance.getInstance(warehouse)
-        try catalog.dropTable(TableIdentifier.of(namespace, storageKey))
-        catch {
+        val location = resolveIcebergLocation(uri)
+        try {
+          location.catalog
+            .dropTable(TableIdentifier.of(location.namespace, location.storageKey), true)
+        } catch {
           case _: NoSuchNamespaceException => false
         }
       case unsupportedScheme =>
@@ -214,10 +206,8 @@ object DocumentFactory {
     }
 
   /**
-    * The URIs of the tables execution `eid` of workflow `wid` has in the namespace of
-    * `resourceType`, found by their names (see [[ExecutionTables.portTables]]): a table is named
-    * after the path of its URI, so the name gives the URI back. A table whose name starts like the
-    * execution's but gives no URI of that kind back is no table this layer made, and is left out.
+    * The URIs of the tables of `resourceType` that execution `eid` of workflow `wid` has, found
+    * by their names in the execution's namespace (see [[ExecutionTables.portTables]]).
     *
     * @return none when there is no such namespace
     */
@@ -226,17 +216,11 @@ object DocumentFactory {
       eid: ExecutionIdentity,
       warehouse: Option[String],
       resourceType: VFSResourceType.Value
-  ): Seq[URI] =
-    namesOf(wid, eid, warehouse, resourceType).flatMap { name =>
-      Try(VFSURIFactory.uriOfPath(name.replace('_', '/'), warehouse)).toOption.filter { uri =>
-        sanitizeURIPath(uri) == name &&
-        Try(decodeURI(uri).resourceType).toOption.contains(resourceType)
-      }
-    }
+  ): Seq[URI] = namedTables(wid, eid, warehouse, resourceType).map(_._2)
 
   /**
-    * Drops every table the execution has in the namespace of `resourceType`, going by the
-    * tables' names (see [[ExecutionTables.dropNamed]]).
+    * Drops every table of `resourceType` the execution has, going by the tables' names (see
+    * [[ExecutionTables.dropNamed]]), and purges their data files.
     *
     * @return the names of the tables dropped; none when there is no such namespace
     */
@@ -246,33 +230,64 @@ object DocumentFactory {
       warehouse: Option[String],
       resourceType: VFSResourceType.Value
   ): Seq[String] = {
-    val catalog = IcebergCatalogInstance.getInstance(warehouse)
-    val namespace = Namespace.of(resolveNamespace(resourceType))
-    namesOf(wid, eid, warehouse, resourceType)
-      .filter(name => catalog.dropTable(TableIdentifier.of(namespace, name)))
+    val catalog = IcebergCatalogInstance.getInstance(warehouse, Some(eid.id))
+    val namespace = Namespace.of(ExecutionNamespace.of(eid.id))
+    namedTables(wid, eid, warehouse, resourceType)
+      .map(_._1)
+      .filter(name => catalog.dropTable(TableIdentifier.of(namespace, name), true))
   }
 
   /**
-    * The names of the tables in the namespace of `resourceType` that start as the execution's
-    * do: with its workflow and its execution, and the separator after the execution's id, which
-    * keeps execution 3 apart from 34.
+    * The tables of `resourceType` in the namespace of execution `eid`, by name, each with the URI
+    * it was made for. A table is named after the path of its URI, so the name gives the URI back.
+    * The namespace holds the execution's tables alone; of them, these are the ones of workflow
+    * `wid` whose name gives a URI of the kind back. Any other table there is no table of that
+    * kind this layer made, and is left out.
+    *
+    * @return none when there is no such namespace
     */
-  private def namesOf(
+  private def namedTables(
       wid: WorkflowIdentity,
       eid: ExecutionIdentity,
       warehouse: Option[String],
       resourceType: VFSResourceType.Value
-  ): Seq[String] = {
+  ): Seq[(String, URI)] = {
     val prefix = s"wid_${wid.id}_eid_${eid.id}_"
     val listed =
       try {
         IcebergCatalogInstance
-          .getInstance(warehouse)
-          .listTables(Namespace.of(resolveNamespace(resourceType)))
+          .getInstance(warehouse, Some(eid.id))
+          .listTables(Namespace.of(ExecutionNamespace.of(eid.id)))
           .asScala
           .toSeq
       } catch { case _: NoSuchNamespaceException => Seq.empty }
-    listed.map(_.name()).filter(_.startsWith(prefix))
+    listed.map(_.name()).filter(_.startsWith(prefix)).flatMap { name =>
+      Try(VFSURIFactory.uriOfPath(name.replace('_', '/'), warehouse)).toOption
+        .filter { uri =>
+          sanitizeURIPath(uri) == name &&
+          Try(decodeURI(uri).resourceType).toOption.contains(resourceType)
+        }
+        .map(name -> _)
+    }
+  }
+
+  /**
+    * Drops the namespace of execution `eid` in `warehouse` with every table in it, each table
+    * purged, its data files and all (see [[ExecutionTables.dropNamespace]]).
+    *
+    * @return the names of the tables dropped; none when there is no such namespace
+    */
+  private[storage] def dropNamespace(eid: Long, warehouse: Option[String]): Seq[String] = {
+    val catalog = IcebergCatalogInstance.getInstance(warehouse, Some(eid))
+    val namespace = ExecutionNamespace.of(eid)
+    val listed =
+      try Some(catalog.listTables(Namespace.of(namespace)).asScala.toSeq)
+      catch { case _: NoSuchNamespaceException => None }
+    listed.fold(Seq.empty[String]) { tables =>
+      val dropped = tables.filter(table => catalog.dropTable(table, true)).map(_.name())
+      IcebergUtil.dropNamespace(catalog, namespace)
+      dropped
+    }
   }
 
   /**
@@ -308,14 +323,10 @@ object DocumentFactory {
       case DATASET_FILE_URI_SCHEME | MODEL_FILE_URI_SCHEME =>
         (new LakeFSFileDocument(uri), None)
       case VFS_FILE_URI_SCHEME =>
-        val IcebergLocation(warehouse, namespace, storageKey) = resolveIcebergLocation(uri)
+        val location = resolveIcebergLocation(uri)
 
         val table = IcebergUtil
-          .loadTableMetadata(
-            IcebergCatalogInstance.getInstance(warehouse),
-            namespace,
-            storageKey
-          )
+          .loadTableMetadata(location.catalog, location.namespace, location.storageKey)
           .getOrElse(
             throw new DocumentNotFoundException("No storage is found for the given URI")
           )
@@ -323,12 +334,13 @@ object DocumentFactory {
         val amberSchema = IcebergUtil.fromIcebergSchema(table.schema())
         (
           new IcebergDocument[Tuple](
-            namespace,
-            storageKey,
+            location.namespace,
+            location.storageKey,
             table.schema(),
             tupleSerde,
             tupleDeserde,
-            warehouse
+            location.warehouse,
+            Some(location.execution)
           ),
           Some(amberSchema)
         )

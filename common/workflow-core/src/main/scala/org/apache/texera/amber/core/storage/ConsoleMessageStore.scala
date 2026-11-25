@@ -53,9 +53,8 @@ final case class ConsoleRow(
 
 /**
   * Keeps each execution's console table, one of its [[ExecutionTables]] and one for all its
-  * operators, at the URI [[consoleUri]] names (namespace
-  * `storage.iceberg.table.console-messages-namespace`, table
-  * `wid_<wid>_eid_<eid>_consolemessages`).
+  * operators, at the URI [[consoleUri]] names (table `wid_<wid>_eid_<eid>_consolemessages` in
+  * the execution's namespace, `execution-<eid>`).
   */
 object ConsoleMessageStore {
 

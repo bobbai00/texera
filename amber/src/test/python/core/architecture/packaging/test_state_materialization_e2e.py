@@ -46,7 +46,9 @@ from core.architecture.packaging.output_manager import OutputManager
 from core.models import State, StateFrame
 from core.models.internal_queue import DataElement, InternalQueue
 from core.storage.document_factory import DocumentFactory
+from core.storage.execution_namespace import execution_namespace
 from core.storage.iceberg.iceberg_catalog_instance import IcebergCatalogInstance
+from core.storage.iceberg.iceberg_utils import create_namespace
 from core.storage.runnables.input_port_materialization_reader_runnable import (
     InputPortMaterializationReaderRunnable,
 )
@@ -72,9 +74,11 @@ from proto.org.apache.texera.amber.engine.architecture.sendsemantics import (
 # We don't initialize `StorageConfig` here: other test modules (e.g.
 # test_iceberg_document.py) also call `StorageConfig.initialize` at
 # import time, and the class rejects re-initialization with
-# RuntimeError. Whichever module gets collected first wins; we adopt
-# its namespaces below.
+# RuntimeError. Whichever module gets collected first wins.
 _WAREHOUSE_DIR = tempfile.mkdtemp(prefix="texera-state-e2e-warehouse-")
+
+# The execution every port in this file belongs to.
+_EXECUTION = ExecutionIdentity(id=0)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -106,8 +110,6 @@ def sqlite_iceberg_catalog():
             postgres_password="unused",
             rest_catalog_uri="unused",
             rest_catalog_warehouse_name="unused",
-            table_result_namespace="operator-port-result",
-            table_state_namespace="operator-port-state",
             directory_path=_WAREHOUSE_DIR,
             commit_batch_size=4096,
             s3_endpoint="unused",
@@ -126,10 +128,10 @@ def sqlite_iceberg_catalog():
             "warehouse": f"file://{_WAREHOUSE_DIR}",
         },
     )
-    # Adopt whatever namespaces StorageConfig already has -- those are
-    # the ones DocumentFactory will route into.
-    catalog.create_namespace_if_not_exists(StorageConfig.ICEBERG_TABLE_RESULT_NAMESPACE)
-    catalog.create_namespace_if_not_exists(StorageConfig.ICEBERG_TABLE_STATE_NAMESPACE)
+    # DocumentFactory routes every table of an execution into the namespace of
+    # that execution, which the Dashboard Service makes before the execution
+    # starts; the engine never does, so it is made here.
+    create_namespace(catalog, execution_namespace(_EXECUTION.id))
     IcebergCatalogInstance.replace_instance(catalog)
     try:
         yield catalog
@@ -142,7 +144,7 @@ def _fresh_base_uri() -> str:
     """A unique port-base URI per test so tables don't collide."""
     return VFSURIFactory.create_port_base_uri(
         WorkflowIdentity(id=0),
-        ExecutionIdentity(id=0),
+        _EXECUTION,
         GlobalPortIdentity(
             op_id=PhysicalOpIdentity(
                 logical_op_id=OperatorIdentity(id=f"e2e-{uuid.uuid4().hex}"),

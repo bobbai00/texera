@@ -26,7 +26,6 @@ import org.apache.arrow.vector.ipc.ArrowFileReader
 import org.apache.arrow.vector.util.ByteArrayReadableSeekableByteChannel
 import org.apache.texera.amber.core.storage.{
   DocumentFactory,
-  ExecutionTables,
   VFSURIFactory,
   WarehouseUnavailableException
 }
@@ -40,6 +39,7 @@ import org.apache.texera.amber.core.virtualidentity.{
 }
 import org.apache.texera.amber.core.workflow.OutputPort.OutputMode
 import org.apache.texera.amber.core.workflow.{GlobalPortIdentity, PortIdentity, ResultTable}
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.amber.util.ArrowUtils
 import org.apache.texera.auth.{JwtAuth, SessionUser}
 import org.apache.texera.dao.{MockTexeraDB, WorkflowExecutionStatus}
@@ -523,13 +523,10 @@ class ResultExportServiceSpec
     execution.setWhid(whid)
     workflowExecutionsDao.insert(execution)
     // The lake outlives this suite's database, and each run of the suite makes the same
-    // execution ids: a result an earlier run stored under this id is not this execution's.
-    ExecutionTables.dropNamed(
-      WorkflowIdentity(version.getWid.longValue()),
-      ExecutionIdentity(execution.getEid.longValue()),
-      None,
-      ExecutionTables.ProducedKinds
-    )
+    // execution ids: what an earlier run stored under this id is not this execution's. Its
+    // namespace is made afresh, as the Dashboard service makes it at the create.
+    TestUtils.dropExecutionNamespace(execution.getEid.longValue())
+    TestUtils.makeExecutionNamespace(execution.getEid.longValue())
     execution
   }
 

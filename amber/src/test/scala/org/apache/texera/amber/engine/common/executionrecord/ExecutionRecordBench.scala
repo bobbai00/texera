@@ -26,6 +26,7 @@ import org.apache.texera.amber.core.storage.{
   ConsoleRow,
   ExecutionLogEntry,
   ExecutionLogStore,
+  ExecutionNamespace,
   IcebergCatalogInstance,
   RuntimeStatisticsRow,
   RuntimeStatisticsStore
@@ -50,6 +51,7 @@ import org.apache.texera.amber.engine.common.executionruntimestate.{
   OperatorMetrics,
   OperatorStatistics
 }
+import org.apache.texera.amber.engine.e2e.TestUtils
 import org.apache.texera.common.config.StorageConfig
 
 import java.io.{File, FileWriter, PrintWriter}
@@ -428,7 +430,8 @@ object ExecutionRecordBench {
   // ---------------------------------------------------------------------------
 
   /**
-    * One run of `config.ticks` ticks, recorded as execution `executionId`.
+    * One run of `config.ticks` ticks, recorded as execution `executionId`, in the execution's
+    * namespace, which the run makes first, as the Dashboard service makes it.
     *
     * The recorder's stores are the lake's, wrapped to time every write, and to read the record
     * right before a tidy. Everything the bench tells the recorder it also keeps, as the rows
@@ -442,12 +445,10 @@ object ExecutionRecordBench {
     private val logUri = ExecutionLogStore.logUri(Workflow, execution, None)
     private val statisticsUri = RuntimeStatisticsStore.statisticsUri(Workflow, execution, None)
     private val consoleUri = ConsoleMessageStore.consoleUri(Workflow, execution, None)
-    private val tables = Seq(
-      (Log, StorageConfig.icebergTableExecutionLogNamespace, logUri),
-      (Statistics, StorageConfig.icebergTableRuntimeStatisticsNamespace, statisticsUri),
-      (Console, StorageConfig.icebergTableConsoleMessagesNamespace, consoleUri)
-    )
+    private val tables = Seq((Log, logUri), (Statistics, statisticsUri), (Console, consoleUri))
     private val operators = operatorIds(config.operators)
+    // Before the recorder, which makes its tables as it starts.
+    TestUtils.makeExecutionNamespace(executionId)
 
     private val clock = new AtomicLong(StartMs)
     // The tick whose numbers the recorder was last told; 0 before the first.
@@ -619,11 +620,14 @@ object ExecutionRecordBench {
 
     private def shapes(): Map[String, Shape] =
       tables.map {
-        case (name, namespace, uri) =>
+        case (name, uri) =>
           val table = IcebergCatalogInstance
-            .getInstance()
+            .getInstance(execution = Some(executionId))
             .loadTable(
-              TableIdentifier.of(namespace, uri.getPath.stripPrefix("/").replace("/", "_"))
+              TableIdentifier.of(
+                ExecutionNamespace.of(executionId),
+                uri.getPath.stripPrefix("/").replace("/", "_")
+              )
             )
           name -> Shape(
             Option(table.currentSnapshot()).fold(0)(_.summary().get("total-data-files").toInt),
@@ -687,7 +691,7 @@ object ExecutionRecordBench {
       read
     }
 
-    /** Runs the run to its end, and drops its tables. */
+    /** Runs the run to its end, and drops its namespace with its tables. */
     def run(): Outcome =
       try {
         change("READY")
@@ -721,13 +725,8 @@ object ExecutionRecordBench {
         )
       } finally {
         // Also of a run that broke off: its recorder has no timer, and its thread is a daemon.
-        Seq(
-          logUri -> (() => ExecutionLogStore.drop(logUri)),
-          statisticsUri -> (() => RuntimeStatisticsStore.drop(statisticsUri)),
-          consoleUri -> (() => ConsoleMessageStore.drop(consoleUri))
-        ).foreach {
-          case (uri, drop) =>
-            Try(drop()).failed.foreach(failure => println(s"WARN $uri was not dropped: $failure"))
+        Try(TestUtils.dropExecutionNamespace(executionId)).failed.foreach { failure =>
+          println(s"WARN the namespace of execution $executionId was not dropped: $failure")
         }
       }
   }

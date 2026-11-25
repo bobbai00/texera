@@ -41,8 +41,11 @@ class RuntimeStatisticsStoreSpec extends AnyFlatSpec with Matchers with Embedded
   // Executions below 100 are left to the specs that name one.
   private val nextExecutionId = new AtomicLong(100)
 
+  /** The statistics of a new execution, whose namespace is made. */
   private def freshStatisticsUri(warehouse: Option[String] = None): URI =
-    statisticsUri(workflowId, ExecutionIdentity(nextExecutionId.getAndIncrement()), warehouse)
+    withNamespace(
+      statisticsUri(workflowId, ExecutionIdentity(nextExecutionId.getAndIncrement()), warehouse)
+    )
 
   private def createdStatistics(warehouse: Option[String] = None): URI = {
     val uri = freshStatisticsUri(warehouse)

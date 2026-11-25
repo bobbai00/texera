@@ -281,9 +281,11 @@ SERVICES: list[Service] = [
     Service("postgres",   "docker", 5432),
     Service("rustfs",     "docker", 9000),
     Service("lakefs",     "docker", 8000),
+    Service("openfga",    "docker", 8081),   # not published on the host: Lakekeeper's port for it
     Service("lakekeeper", "docker", 8181),
     Service("litellm",    "docker", 4000),
     Service("jupyter",    "docker", 9100),
+    Service("gateway",    "docker", 8086),   # frontend/proxy.config.json sends /wsapi here
     _jvm("config-service",                  9094, "ConfigService",
          "config-service/src"),
     _jvm("access-control-service",          9096, "AccessControlService",

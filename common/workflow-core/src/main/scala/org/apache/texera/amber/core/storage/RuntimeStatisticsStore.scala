@@ -56,8 +56,8 @@ final case class RuntimeStatisticsRow(
 
 /**
   * Keeps each execution's runtime statistics table, one of its [[ExecutionTables]], at the URI
-  * [[statisticsUri]] names (namespace `storage.iceberg.table.runtime-statistics-namespace`,
-  * table `wid_<wid>_eid_<eid>_runtimestatistics`).
+  * [[statisticsUri]] names (table `wid_<wid>_eid_<eid>_runtimestatistics` in the execution's
+  * namespace, `execution-<eid>`).
   */
 object RuntimeStatisticsStore {
 
